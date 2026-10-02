@@ -1,0 +1,7 @@
+pwntools>=4.11.0
+cryptography>=42.0.0
+rich>=13.7.0
+prompt_toolkit>=3.0.43
+redis>=5.0.0
+paramiko>=3.0.0
+requests>=2.31.0
