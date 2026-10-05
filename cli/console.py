@@ -3,6 +3,11 @@ import shlex
 import subprocess
 import sys
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.history import FileHistory
+
 from core import colors
 from core.module_manager import ModuleManager
 from core.session_manager import SessionManager
@@ -50,6 +55,17 @@ class Console:
         self.running = True
         self._local_cwd = os.getcwd()
         self._skip_update = "--no-update-check" in sys.argv
+
+        history_path = os.path.expanduser("~/.metis_history")
+        try:
+            os.makedirs(os.path.dirname(history_path), exist_ok=True)
+        except Exception:
+            pass
+
+        self._session = PromptSession(
+            history=FileHistory(history_path),
+            auto_suggest=AutoSuggestFromHistory(),
+        )
 
     def _check_update_silent(self):
         if self._skip_update:
@@ -377,8 +393,11 @@ class Console:
 
         while s.alive:
             try:
-                cmd = input(colors.session(f"{sid} $ "))
-            except (EOFError, KeyboardInterrupt):
+                cmd = self._session.prompt(ANSI(colors.session(f"{sid} $ ")))
+            except KeyboardInterrupt:
+                print()
+                continue
+            except EOFError:
                 print()
                 break
 
@@ -977,8 +996,10 @@ class Console:
         try:
             while self.running:
                 try:
-                    line = input(self.prompt())
-                except (EOFError, KeyboardInterrupt):
+                    line = self._session.prompt(ANSI(self.prompt()))
+                except KeyboardInterrupt:
+                    continue
+                except EOFError:
                     print()
                     break
                 self.dispatch(line)
