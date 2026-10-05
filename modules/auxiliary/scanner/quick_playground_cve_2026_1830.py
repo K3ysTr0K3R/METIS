@@ -27,7 +27,7 @@ class QuickPlaygroundScanner(Auxiliary):
         "endpoint without uploading a webshell."
     )
     AUTHOR = "K3ysTr0K3R"
-    RANK = "critical"
+    RANK = "great"
     DISCLOSED = "2026-04-08"
     CHECK = True
     REFERENCES = [
