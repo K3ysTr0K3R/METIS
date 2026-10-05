@@ -33,7 +33,7 @@ class FortiosPathTraversalScanner(Auxiliary):
         "the session dump but does not save passwords."
     )
     AUTHOR = "K3ysTr0K3R"
-    RANK = "critical"
+    RANK = "great"
     DISCLOSED = "2018-06-03"
     CHECK = True
     REFERENCES = [
