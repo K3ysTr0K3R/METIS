@@ -2,12 +2,11 @@ import os
 import shlex
 import subprocess
 import sys
-
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import FileHistory
-
 from core import colors
 from core.module_manager import ModuleManager
 from core.session_manager import SessionManager
@@ -28,9 +27,83 @@ GRADIENT_PRESETS = {
 }
 
 
+class MetisCompleter(Completer):
+    def __init__(self, console):
+        self.console = console
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        parts = text.split()
+
+        if not parts:
+            for name in self._command_names():
+                yield Completion(name, start_position=0)
+            return
+
+        if text.endswith(" ") and len(parts) == 1:
+            cmd = parts[0]
+            for item in self._args_for(cmd, ""):
+                yield Completion(item, start_position=0)
+            return
+
+        if len(parts) == 1 and not text.endswith(" "):
+            word = parts[0]
+            for name in self._command_names():
+                if name.startswith(word):
+                    yield Completion(name, start_position=-len(word))
+            return
+
+        cmd = parts[0]
+        word = parts[-1] if not text.endswith(" ") else ""
+        prefix_start = -len(word) if word else 0
+        for item in self._args_for(cmd, word):
+            yield Completion(item, start_position=prefix_start)
+
+    def _command_names(self):
+        names = []
+        for n in dir(self.console):
+            if n.startswith("do_"):
+                names.append(n[3:])
+        return sorted(names)
+
+    def _args_for(self, cmd, partial):
+        c = self.console
+        if cmd in ("use", "info"):
+            for p in c.modules.list():
+                if p.startswith(partial):
+                    yield p
+            return
+        if cmd == "theme":
+            for t in colors.list_themes():
+                if t.startswith(partial):
+                    yield t
+            return
+        if cmd in ("interact", "kill"):
+            for s in c.sessions.list():
+                if s.id.startswith(partial):
+                    yield s.id
+            return
+        if cmd == "show":
+            for o in ("modules", "options", "info", "globals", "themes", "payloads", "spool"):
+                if o.startswith(partial):
+                    yield o
+            return
+        if cmd in ("set", "unset"):
+            if c.active_module:
+                for name in c.active_module.options:
+                    if name.startswith(partial.upper()):
+                        yield name
+            return
+        if cmd in ("setg", "unsetg"):
+            for name in c.global_options:
+                if name.startswith(partial.upper()):
+                    yield name
+            return
+
+
 class Console:
     BASE_PROMPT = "metis"
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
     REPO = "K3ysTr0K3R/METIS"
     BANNER = (
         "███╗   ███╗███████╗████████╗██╗███████╗\n"
@@ -39,7 +112,7 @@ class Console:
         "██║╚██╔╝██║██╔══╝     ██║   ██║╚════██║\n"
         "██║ ╚═╝ ██║███████╗   ██║   ██║███████║\n"
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
-        "K3ysTr0K3R                    v1.0.0\n"
+        "K3ysTr0K3R                    v1.1.0\n"
         "\n"
         "Modular Exploitation & Threat Intelligence System\n"
     )
@@ -55,6 +128,10 @@ class Console:
         self.running = True
         self._local_cwd = os.getcwd()
         self._skip_update = "--no-update-check" in sys.argv
+        self._spool_file = None
+
+        self._config_path = os.path.expanduser("~/.metis_config")
+        self._load_globals()
 
         history_path = os.path.expanduser("~/.metis_history")
         try:
@@ -65,7 +142,42 @@ class Console:
         self._session = PromptSession(
             history=FileHistory(history_path),
             auto_suggest=AutoSuggestFromHistory(),
+            completer=MetisCompleter(self),
+            complete_while_typing=True,
         )
+
+    def _load_globals(self):
+        if not os.path.isfile(self._config_path):
+            return
+        try:
+            with open(self._config_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        self.global_options[k.strip().upper()] = v.strip()
+        except Exception:
+            pass
+
+    def _save_globals(self):
+        try:
+            with open(self._config_path, "w") as f:
+                f.write("# metis global options\n")
+                for k, v in sorted(self.global_options.items()):
+                    f.write(f"{k}={v}\n")
+        except Exception:
+            pass
+
+    def _spool(self, text):
+        if not self._spool_file:
+            return
+        try:
+            with open(self._spool_file, "a") as f:
+                f.write(text + "\n")
+        except Exception:
+            pass
 
     def _check_update_silent(self):
         if self._skip_update:
@@ -120,10 +232,6 @@ class Console:
 
         print(colors.warn("update available: v" + current + " -> v" + latest))
         print(colors.dimmed("  release: " + str(data.get("html_url", ""))))
-        body = data.get("body") or ""
-        if body:
-            first_line = body.splitlines()[0] if body.splitlines() else ""
-            print(colors.dimmed("  notes:   " + first_line))
 
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         try:
@@ -188,7 +296,7 @@ class Console:
             print(colors.bad(f"local command failed: {e}"))
 
     def do_shell(self, args):
-        """shell  — drop into an interactive local shell (exit to return)"""
+        """shell  — drop into an interactive local shell"""
         shell_bin = os.environ.get("SHELL", "/bin/bash")
         print(colors.info(f"dropping to {shell_bin} — type 'exit' to return"))
         try:
@@ -201,7 +309,7 @@ class Console:
         print(colors.info("back in metis"))
 
     def do_exec(self, args):
-        """exec <cmd>  — run a local shell command (explicit form)"""
+        """exec <cmd>  — run a local shell command"""
         cmd = args.strip()
         if not cmd:
             print(colors.warn("usage: exec <command>"))
@@ -298,7 +406,7 @@ class Console:
         self.handlers.append(h)
 
     def do_connect(self, args):
-        """connect <host> <port>  — connect to a bind shell and register a session"""
+        """connect <host> <port>  — connect to a bind shell"""
         import socket as _socket
         parts = args.strip().split()
         if len(parts) != 2:
@@ -332,7 +440,7 @@ class Console:
             idx = int(args.strip())
             h = self.handlers.pop(idx)
         except (ValueError, IndexError):
-            print(colors.warn("usage: kill_handler <index>  (see 'handlers')"))
+            print(colors.warn("usage: kill_handler <index>"))
             return
         h.stop()
         print(colors.info(f"handler {idx} stopped"))
@@ -512,7 +620,7 @@ class Console:
             print(f"  {name.ljust(w_name)}  reverse shell")
 
     def do_search(self, args):
-        """search <term>  — find modules by name or description; use N to select"""
+        """search <term>  — find modules by name or description"""
         term = args.strip()
         if not term:
             print(colors.warn("usage: search <term>"))
@@ -526,7 +634,7 @@ class Console:
         print(colors.dimmed(f"  ({len(hits)} match(es). Use 'use N' to select by number.)"))
 
     def do_show(self, args):
-        """show modules | options | info | globals | themes | payloads"""
+        """show modules | options | info | globals | themes | payloads | spool"""
         what = args.strip().split()[0] if args.strip() else ""
         if what == "modules":
             rows = [self.modules.metadata(p) for p in self.modules.list()]
@@ -551,9 +659,14 @@ class Console:
             for t in colors.list_themes():
                 marker = colors.good("(current)") if t == current else ""
                 print(f"  {t.ljust(16)} {colors.theme_preview(t)} {marker}")
+        elif what == "spool":
+            if self._spool_file:
+                print(colors.info("spooling to: " + self._spool_file))
+            else:
+                print(colors.info("spooling: off"))
         else:
             print(colors.warn(
-                "usage: show modules | options | info | globals | themes | payloads"
+                "usage: show modules | options | info | globals | themes | payloads | spool"
             ))
 
     def do_options(self, _):
@@ -561,14 +674,14 @@ class Console:
         self.do_show("options")
 
     def do_info(self, args):
-        """info [N|path]  — show details of active module, a search result, or a path"""
+        """info [N|path]  — show module details"""
         target = None
         arg = args.strip()
         if arg:
             if arg.isdigit():
                 idx = int(arg) - 1
                 if not (0 <= idx < len(self.last_search)):
-                    print(colors.bad(f"no search result #{arg} — run search first"))
+                    print(colors.bad(f"no search result #{arg}"))
                     return
                 target = self.last_search[idx]
             else:
@@ -580,7 +693,7 @@ class Console:
         elif self.active_module:
             target = self.modules.metadata(self.active_path)
         else:
-            print(colors.bad("no module selected — pass a path or search first"))
+            print(colors.bad("no module selected"))
             return
 
         rank_col = self._rank_color(target["rank"])
@@ -614,7 +727,7 @@ class Console:
         return lines or [""]
 
     def do_use(self, args):
-        """use <N|module/path>  — select a module by search index or path"""
+        """use <N|module/path>  — select a module"""
         arg = args.strip()
         if not arg:
             print(colors.warn("usage: use <N|module/path>"))
@@ -623,14 +736,12 @@ class Console:
         path = arg
         if arg.isdigit():
             idx = int(arg) - 1
-
             if self.last_search:
                 source = self.last_search
                 source_label = "search result"
             else:
                 source = [self.modules.metadata(p) for p in self.modules.list()]
                 source_label = "module"
-
             if not (0 <= idx < len(source)):
                 print(colors.bad(
                     f"{source_label} #{arg} out of range (have {len(source)})"
@@ -691,13 +802,14 @@ class Console:
         print(colors.info(f"{name} unset"))
 
     def do_setg(self, args):
-        """setg <OPTION> <value>  — set a global option applied to all modules"""
+        """setg <OPTION> <value>  — set a global option (persists across runs)"""
         parts = args.split(maxsplit=1)
         if len(parts) != 2:
             print(colors.warn("usage: setg <OPTION> <value>"))
             return
         name, value = parts
         self.global_options[name.upper()] = value
+        self._save_globals()
         if self.active_module and name.upper() in self.active_module.options:
             try:
                 self.active_module.set_option(name.upper(), value)
@@ -712,6 +824,7 @@ class Console:
             print(colors.bad(f"no such global option: {name}"))
             return
         del self.global_options[name]
+        self._save_globals()
         print(colors.info(f"global {name} cleared"))
 
     def do_check(self, _):
@@ -732,7 +845,7 @@ class Console:
         print(colors.info(f"check -> {CheckResult.colorize(result)}"))
 
     def do_run(self, args):
-        """run [target]  — execute the active module (optional target override)"""
+        """run [target]  — execute the active module"""
         self._run_active(args)
 
     def do_exploit(self, args):
@@ -803,6 +916,52 @@ class Console:
             print(colors.bad(str(e)))
             return
         print(colors.good(f"SOURCE => {path}"))
+
+    def do_spool(self, args):
+        """spool [file]  — log all console output to a file (no arg = stop)"""
+        path = args.strip()
+        if not path:
+            if self._spool_file:
+                print(colors.info("spool stopped: " + self._spool_file))
+                self._spool_file = None
+            else:
+                print(colors.info("spooling is off"))
+            return
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.join(self._local_cwd, path)
+        try:
+            with open(path, "a") as f:
+                f.write("# metis spool started\n")
+        except OSError as e:
+            print(colors.bad("could not open spool file: " + str(e)))
+            return
+        self._spool_file = path
+        print(colors.good("spooling to: " + path))
+
+    def do_history(self, args):
+        """history [n]  — show last N commands (default 20)"""
+        n = 20
+        if args.strip():
+            try:
+                n = int(args.strip())
+            except ValueError:
+                print(colors.warn("usage: history [n]"))
+                return
+        history_path = os.path.expanduser("~/.metis_history")
+        if not os.path.isfile(history_path):
+            print(colors.info("no history yet"))
+            return
+        try:
+            with open(history_path) as f:
+                lines = [ln.rstrip("\n") for ln in f if ln.strip()]
+        except OSError as e:
+            print(colors.bad(str(e)))
+            return
+        total = len(lines)
+        start = max(0, total - n)
+        for i, line in enumerate(lines[start:], start + 1):
+            print(f"  {str(i).rjust(4)}  {line}")
 
     def do_theme(self, args):
         """theme [name]  — list themes or switch to one"""
@@ -927,7 +1086,7 @@ class Console:
         return f"  preview ({len(stops)} stops): " + "".join(cells)
 
     def do_help(self, args):
-        """help [command]  — show help for a command or all commands"""
+        """help [command]  — show help"""
         if args.strip():
             cmd = args.strip()
             h = getattr(self, f"do_{cmd}", None)
@@ -949,8 +1108,8 @@ class Console:
                 summary = summary[len(cmd):].lstrip(" —-")
             print(f"  {colors.session(cmd.ljust(width))} {summary}")
         print()
+        print(colors.dimmed("  tab completes commands, module paths, session IDs, options"))
         print(colors.dimmed("  any unrecognised command is passed to your local shell"))
-        print(colors.dimmed("  e.g.  id   nmap -sV 10.0.0.1   git status   cat /etc/hosts"))
 
     def do_clear(self, _):
         """clear  — clear the screen"""
@@ -967,6 +1126,8 @@ class Console:
     def dispatch(self, line):
         if not line.strip():
             return
+
+        self._spool("metis > " + line)
 
         if line.startswith("!"):
             cmd = line[1:].strip()
