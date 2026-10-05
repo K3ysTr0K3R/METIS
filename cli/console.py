@@ -2,6 +2,7 @@ import os
 import shlex
 import subprocess
 import sys
+
 from core import colors
 from core.module_manager import ModuleManager
 from core.session_manager import SessionManager
@@ -35,17 +36,17 @@ class Console:
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
         "K3ysTr0K3R                    v1.0.0\n"
         "\n"
-        "Modular Exploitation & Threat Intelligence Framework\n"
+        "Modular Exploitation & Threat Intelligence System\n"
     )
 
     def __init__(self):
         self.sessions = SessionManager()
         self.modules = ModuleManager(root="modules")
-        self.handlers: list[ReverseTCPHandler] = []
+        self.handlers = []
         self.active_module = None
         self.active_path = None
-        self.global_options: dict[str, str] = {}
-        self.last_search: list[dict] = []
+        self.global_options = {}
+        self.last_search = []
         self.running = True
         self._local_cwd = os.getcwd()
         self._skip_update = "--no-update-check" in sys.argv
@@ -142,7 +143,7 @@ class Console:
         except Exception as e:
             print(colors.bad("git pull error: " + str(e)))
 
-    def prompt(self) -> str:
+    def prompt(self):
         user_color = colors.wrap_fallback("prompt_user", "prompt")
         cat_color = colors.wrap_fallback("prompt_category", "prompt")
         path_color = colors.wrap("prompt")
@@ -159,7 +160,7 @@ class Console:
             return f"{user} {cat}{rest_padded}{src} > "
         return user_color(f"{base} > ")
 
-    def _run_local(self, cmd: str, echo: bool = False):
+    def _run_local(self, cmd, echo=False):
         if echo:
             print(colors.dimmed(f"[*] exec: {cmd}"))
         try:
@@ -364,8 +365,15 @@ class Console:
         ))
 
         self._sync_session(s, timeout=4.0)
-        s.shell("set +m", timeout=1.5)
-        self._sync_session(s, timeout=1.0)
+
+        for init_cmd in (
+            "stty -echo 2>/dev/null",
+            "PS1='' PS2=''",
+            "set +m 2>/dev/null",
+        ):
+            s.shell(init_cmd, timeout=0.5)
+
+        self._sync_session(s, timeout=0.5)
 
         while s.alive:
             try:
@@ -407,7 +415,7 @@ class Console:
         """reap  — drop dead sessions"""
         self.sessions.reap()
 
-    def _rank_color(self, rank: str):
+    def _rank_color(self, rank):
         r = rank.lower()
         if r == "excellent":
             return colors.wrap("good")
@@ -423,7 +431,7 @@ class Console:
             return colors.wrap("warn")
         return lambda s: s
 
-    def _print_module_table(self, rows: list[dict]):
+    def _print_module_table(self, rows):
         if not rows:
             print(colors.info("no modules"))
             return
@@ -573,7 +581,7 @@ class Console:
             print("  " + line)
 
     @staticmethod
-    def _wrap(text: str, width: int) -> list[str]:
+    def _wrap(text, width):
         words = text.split()
         lines, cur = [], ""
         for w in words:
@@ -712,7 +720,7 @@ class Console:
         """exploit [target]  — alias for run"""
         self._run_active(args)
 
-    def _run_active(self, args: str = ""):
+    def _run_active(self, args=""):
         if not self.active_module:
             print(colors.bad("no module selected"))
             return
@@ -884,7 +892,7 @@ class Console:
         print()
         print(self._gradient_preview(codes))
 
-    def _gradient_preview(self, stops: list[int]) -> str:
+    def _gradient_preview(self, stops):
         width = 40
         cells = []
         for i in range(width):
@@ -937,7 +945,7 @@ class Console:
         """quit  — alias for exit"""
         self.running = False
 
-    def dispatch(self, line: str):
+    def dispatch(self, line):
         if not line.strip():
             return
 
