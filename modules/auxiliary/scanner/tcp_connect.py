@@ -12,7 +12,7 @@ class TCPConnectScanner(Auxiliary):
         "Scan a host or subnet for open TCP ports using connect(). "
         "Supports single hosts, comma lists, CIDR, ranges, and file: specs."
     )
-    AUTHOR = "you"
+    AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
     CHECK = False
 
