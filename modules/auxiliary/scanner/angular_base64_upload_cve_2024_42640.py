@@ -1,0 +1,166 @@
+import ssl
+import urllib.error
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from core import colors
+from core.auxiliary import Auxiliary
+from core.check import CheckResult
+from core.module import Option
+from core.progress import ProgressBar
+
+
+PATHS = [
+    "/bower_components/angular-base64-upload/demo/index.html",
+    "/node_modules/angular-base64-upload/demo/index.html",
+    "/angular-base64-upload/demo/index.html",
+]
+
+SERVER_PATHS = [
+    "/bower_components/angular-base64-upload/demo/server.php",
+    "/node_modules/angular-base64-upload/demo/server.php",
+    "/angular-base64-upload/demo/server.php",
+]
+
+
+@dataclass
+class HostResult:
+    host: str
+    state: str = "unknown"
+    detail: str = ""
+    path: str = ""
+
+
+class AngularBase64UploadScanner(Auxiliary):
+    NAME = "Angular-Base64-Upload RCE Scanner (CVE-2024-42640)"
+    DESCRIPTION = (
+        "Detects angular-base64-upload demo installations vulnerable to "
+        "unauthenticated RCE via demo/server.php. Versions prior to 0.1.21 "
+        "allow arbitrary file upload that lands in demo/uploads and executes "
+        "as PHP. Checks for the demo and server.php endpoints without "
+        "uploading anything."
+    )
+    AUTHOR = "K3ysTr0K3R"
+    RANK = "critical"
+    DISCLOSED = "2024-10-10"
+    CHECK = True
+    REFERENCES = [
+        "CVE-2024-42640",
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-42640",
+        "https://github.com/rvizx/CVE-2024-42640",
+        "https://www.zyenra.com/blog/unauthenticated-rce-in-angular-base64-upload.html",
+    ]
+
+    OPTIONS = [
+        Option("RHOSTS", required=True,
+               description="target(s): host | h1,h2 | CIDR | range | file:path"),
+        Option("RPORT", default=80, type=int, description="HTTP port"),
+        Option("SSL", default=False, type=bool, description="use HTTPS"),
+        Option("TIMEOUT", default=10.0, type=float, description="per-request timeout"),
+        Option("THREADS", default=50, type=int, description="concurrent workers"),
+        Option("STOP_ON_FIRST", default=False, type=bool,
+               description="stop after first vulnerable host"),
+    ]
+
+    def _expand_targets(self):
+        hosts = self.resolve_targets()
+        if not hosts:
+            raise ValueError("no targets - set RHOSTS")
+        if len(hosts) > 1:
+            print(colors.info("target list -> " + str(len(hosts)) + " hosts"))
+        return hosts
+
+    def _base_url(self, host):
+        scheme = "https" if self.options["SSL"] else "http"
+        return scheme + "://" + host + ":" + str(self.options["RPORT"])
+
+    def _get(self, host, path, method="GET"):
+        url = self._base_url(host) + path
+        ctx = ssl._create_unverified_context()
+        req = urllib.request.Request(url, method=method)
+        req.add_header("User-Agent", "Mozilla/5.0 (metis)")
+        try:
+            with urllib.request.urlopen(req, timeout=self.options["TIMEOUT"], context=ctx) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+        except urllib.error.URLError:
+            raise
+
+    def _probe(self, host):
+        for p in PATHS:
+            try:
+                st, _ = self._get(host, p, method="HEAD")
+            except urllib.error.URLError as e:
+                return HostResult(host, "unknown", type(e).__name__)
+            if st == 200:
+                prefix = p.rsplit("/demo/", 1)[0]
+                return HostResult(host, "vulnerable", "demo exposed", prefix)
+        return HostResult(host, "safe", "demo not found")
+
+    def check(self):
+        targets = self._expand_targets()
+        host = targets[0]
+        print(colors.info("check: probing " + self._base_url(host)))
+        r = self._probe(host)
+        if r.state == "vulnerable":
+            print(colors.vuln("check: " + host + " vulnerable (" + r.detail + ")"))
+            print(colors.dimmed("  prefix: " + r.path))
+            return CheckResult.VULNERABLE
+        if r.state == "safe":
+            print(colors.safe("check: " + host + " not vulnerable (" + r.detail + ")"))
+            return CheckResult.SAFE
+        print(colors.warn("check: " + host + " unknown (" + r.detail + ")"))
+        return CheckResult.UNKNOWN
+
+    def action(self):
+        targets = self._expand_targets()
+        threads = max(1, self.options["THREADS"])
+        stop_first = self.options["STOP_ON_FIRST"]
+
+        print(colors.info("scanning " + str(len(targets)) + " host(s) with " + str(threads) + " threads"))
+        bar = ProgressBar(total=len(targets), prefix="scan")
+        hits = []
+        clean = 0
+        unknown = 0
+        aborted = False
+
+        try:
+            with ThreadPoolExecutor(max_workers=threads) as ex:
+                futures = {ex.submit(self._probe, h): h for h in targets}
+                for fut in as_completed(futures):
+                    bar.tick()
+                    try:
+                        r = fut.result()
+                    except Exception:
+                        unknown += 1
+                        continue
+                    if r.state == "vulnerable":
+                        hits.append(r)
+                        bar.log(colors.vuln(r.host + " - " + r.detail))
+                        if stop_first:
+                            aborted = True
+                            for f in futures:
+                                f.cancel()
+                            break
+                    elif r.state == "safe":
+                        clean += 1
+                    else:
+                        unknown += 1
+        finally:
+            bar.done()
+
+        print()
+        print(colors.heading("--- scan summary ---"))
+        print("  targets:      " + str(len(targets)))
+        print("  vulnerable:   " + colors.green(str(len(hits))))
+        print("  not vuln:     " + colors.dimmed(str(clean)))
+        print("  unknown:      " + colors.warn(str(unknown)))
+        if aborted:
+            print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if hits:
+            print(colors.heading("  vulnerable hosts:"))
+            for h in hits:
+                print("    " + colors.vuln(h.host) + "  " + colors.dimmed(h.path))
+
+        return hits
