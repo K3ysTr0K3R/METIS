@@ -5,3 +5,4 @@ prompt_toolkit>=3.0.43
 redis>=5.0.0
 paramiko>=3.0.0
 requests>=2.31.0
+mmh3>=4.0.0
