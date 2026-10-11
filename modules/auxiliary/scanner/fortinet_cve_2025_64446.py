@@ -30,7 +30,7 @@ class FortiWebAuthBypass(Auxiliary):
     )
 
     AUTHOR = "K3ysTr0K3R"
-    RANK = "critical"
+    RANK = "great"
     DISCLOSED = "2025-10-14"
     CHECK = True
     REFERENCES = [
