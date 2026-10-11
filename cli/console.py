@@ -103,7 +103,7 @@ class MetisCompleter(Completer):
 
 class Console:
     BASE_PROMPT = "metis"
-    VERSION = "1.1.0"
+    VERSION = "1.2.0"
     REPO = "K3ysTr0K3R/METIS"
     BANNER = (
         "███╗   ███╗███████╗████████╗██╗███████╗\n"
@@ -112,9 +112,9 @@ class Console:
         "██║╚██╔╝██║██╔══╝     ██║   ██║╚════██║\n"
         "██║ ╚═╝ ██║███████╗   ██║   ██║███████║\n"
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
-        "K3ysTr0K3R                    v1.1.0\n"
+        "K3ysTr0K3R                    v1.2.0\n"
         "\n"
-        "Modular Exploitation & Threat Intelligence System\n"
+        "Modular Exploitation & Threat Intelligence Framework\n"
     )
 
     def __init__(self):
@@ -619,12 +619,99 @@ class Console:
         for name in names:
             print(f"  {name.ljust(w_name)}  reverse shell")
 
+    def _extract_cves(self, text):
+        import re
+        return [m.upper() for m in re.findall(r"CVE-\d{4}-\d+", text, re.I)]
+
+    def _search_by_cves(self, cves):
+        print(colors.info("searching " + str(len(cves)) + " CVE(s)..."))
+        found = {}
+        missing = []
+
+        for cve in cves:
+            matched = []
+            for path in self.modules.list():
+                meta = self.modules.metadata(path)
+                blob = " ".join([
+                    path,
+                    meta["name"],
+                    meta["description"],
+                    " ".join(meta.get("references") or []),
+                ]).upper()
+                if cve.upper() in blob:
+                    matched.append(meta)
+            if matched:
+                found[cve] = matched
+            else:
+                missing.append(cve)
+
+        if not found:
+            print(colors.info("no modules matched any of the CVEs"))
+            if missing:
+                print(colors.dimmed("  missing: " + ", ".join(missing)))
+            return
+
+        all_rows = []
+        for cve, metas in found.items():
+            print()
+            print(colors.heading(cve))
+            for meta in metas:
+                print("  " + colors.session(meta["path"]))
+                print("    " + colors.dimmed(meta["name"]))
+                all_rows.append(meta)
+
+        print()
+        total = len(all_rows)
+        print(colors.dimmed("  " + str(total) + " module(s) across " + str(len(found)) + " CVE(s)"))
+        if missing:
+            print(colors.dimmed("  no module for: " + ", ".join(missing)))
+
+        self.last_search = all_rows
+
+    def _search_from_file(self, path):
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.join(self._local_cwd, path)
+        if not os.path.isfile(path):
+            print(colors.bad("file not found: " + path))
+            return
+
+        try:
+            with open(path) as f:
+                content = f.read()
+        except OSError as e:
+            print(colors.bad("could not read file: " + str(e)))
+            return
+
+        cves = self._extract_cves(content)
+        if not cves:
+            print(colors.warn("no CVE IDs found in " + path))
+            return
+
+        cves = list(dict.fromkeys(cves))
+        print(colors.info("loaded " + str(len(cves)) + " unique CVE(s) from " + path))
+        self._search_by_cves(cves)
+
     def do_search(self, args):
-        """search <term>  — find modules by name or description"""
+        """search <term|CVE|file:path>  — search modules by keyword, CVE ID, or file"""
         term = args.strip()
         if not term:
             print(colors.warn("usage: search <term>"))
+            print(colors.dimmed("  search redis              — text match"))
+            print(colors.dimmed("  search CVE-2022-0543      — CVE lookup"))
+            print(colors.dimmed("  search CVE-2022-0543,CVE-2017-12615"))
+            print(colors.dimmed("  search file:cves.txt      — bulk CVE lookup"))
             return
+
+        if term.startswith("file:"):
+            self._search_from_file(term[len("file:"):].strip())
+            return
+
+        cves = self._extract_cves(term)
+        if cves and len(term.split()) == 1:
+            self._search_by_cves(cves)
+            return
+
         hits = self.modules.search_detailed(term)
         self.last_search = hits
         if not hits:
