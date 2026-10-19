@@ -145,6 +145,22 @@ class MikroTikRouterOSHTTPDetect(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        banner = "RouterOS"
+        if h.version:
+            banner += " " + h.version
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="http", banner=banner,
+        )
+        bits = ["detected=RouterOS"]
+        if h.version:
+            bits.append("version=" + h.version)
+        bits.append("indicators=" + "|".join(h.matched))
+        self.note(" ".join(bits), address=h.host, kind="mikrotik_info")
+
     def _phase_async(self, targets, bar):
         async def _run():
             sem = asyncio.Semaphore(self.options["THREADS"])
@@ -206,6 +222,13 @@ class MikroTikRouterOSHTTPDetect(Auxiliary):
         finally:
             bar.done()
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
+        if workspace_active:
+            for h in hits:
+                self._record_host_result(h)
+
         errors = len(targets) - len(hits)
 
         print()
@@ -213,6 +236,12 @@ class MikroTikRouterOSHTTPDetect(Auxiliary):
         print("  targets:      " + str(len(targets)))
         print("  RouterOS:     " + colors.green(str(len(hits))))
         print("  errors/skips: " + colors.dimmed(str(errors)))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
 
         if hits:
             print(colors.heading("  detected hosts:"))

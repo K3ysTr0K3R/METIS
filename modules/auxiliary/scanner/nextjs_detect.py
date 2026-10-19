@@ -4,13 +4,11 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-
 from core import colors
 from core.auxiliary import Auxiliary
 from core.check import CheckResult
 from core.module import Option
 from core.progress import ProgressBar
-
 
 @dataclass
 class HostResult:
@@ -19,7 +17,6 @@ class HostResult:
     detail: str = ""
     version: str = ""
     router: str = ""
-
 
 class NextjsDetect(Auxiliary):
     NAME = "Next.js Framework Detector"
@@ -136,6 +133,25 @@ class NextjsDetect(Auxiliary):
 
         return ""
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        banner = ""
+        if h.version:
+            banner = "Next.js " + h.version
+        else:
+            banner = "Next.js"
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name="http", banner=banner,
+        )
+        bits = ["detected=Next.js", "detail=" + h.detail]
+        if h.version:
+            bits.append("version=" + h.version)
+        if h.router:
+            bits.append("router=" + h.router)
+        self.note(" ".join(bits), address=h.host, kind="nextjs_info")
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -166,6 +182,9 @@ class NextjsDetect(Auxiliary):
         clean = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -174,6 +193,7 @@ class NextjsDetect(Auxiliary):
                     try:
                         r = fut.result()
                     except Exception:
+                        clean += 1
                         continue
 
                     if r.state == "confirmed":
@@ -185,6 +205,8 @@ class NextjsDetect(Auxiliary):
                             line += " (" + r.router + ")"
                         line += " - " + r.detail
                         bar.log(colors.good(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -202,6 +224,12 @@ class NextjsDetect(Auxiliary):
         print("  not nextjs:   " + colors.dimmed(str(clean)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  next.js hosts:"))
             for h in hits:

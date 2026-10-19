@@ -197,6 +197,23 @@ class POP3VersionScanner(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        banner = h.banner[:200] if h.banner else ""
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="pop3", banner=banner,
+        )
+        bits = ["banner=" + (h.banner or "(none)")]
+        if h.software:
+            bits.append("software=" + h.software)
+        if h.version:
+            bits.append("version=" + h.version)
+        if h.capa:
+            bits.append("capa=" + ",".join(h.capa[:6]))
+        self.note(" ".join(bits), address=h.host, kind="pop3_info")
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -236,6 +253,9 @@ class POP3VersionScanner(Auxiliary):
         clean = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -256,6 +276,8 @@ class POP3VersionScanner(Auxiliary):
                         if r.version:
                             line += " " + r.version
                         bar.log(colors.good(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -273,6 +295,12 @@ class POP3VersionScanner(Auxiliary):
         print("  no response:  " + colors.dimmed(str(clean)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  pop3 hosts:"))
             for h in hits:

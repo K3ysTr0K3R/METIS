@@ -78,7 +78,6 @@ class MySQLVersionScanner(Auxiliary):
             l0, l1, l2, seq = struct.unpack("BBBB", header)
             length = l0 | (l1 << 8) | (l2 << 16)
 
-            # Read payload
             payload = b""
             remaining = length
             while remaining > 0:
@@ -121,6 +120,18 @@ class MySQLVersionScanner(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="mysql", banner=h.version or "",
+        )
+        bits = ["version=" + (h.version or "(unknown)")]
+        if h.protocol:
+            bits.append("protocol=" + str(h.protocol))
+        self.note(" ".join(bits), address=h.host, kind="mysql_info")
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -153,6 +164,9 @@ class MySQLVersionScanner(Auxiliary):
         clean = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -170,6 +184,8 @@ class MySQLVersionScanner(Auxiliary):
                         line += "  MySQL " + r.version
                         line += "  (protocol " + str(r.protocol) + ")"
                         bar.log(colors.good(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -187,6 +203,12 @@ class MySQLVersionScanner(Auxiliary):
         print("  no response:  " + colors.dimmed(str(clean)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  mysql hosts:"))
             for h in hits:

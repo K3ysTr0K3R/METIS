@@ -23,7 +23,6 @@ try:
         SMB2_COMPRESSION_CAPABILITIES,
         SMB2_PREAUTH_INTEGRITY_CAPABILITIES,
     )
-    
 except ImportError:
     SMB2_DIALECT_002 = 0x0202
     SMB2_DIALECT_21 = 0x0210
@@ -467,6 +466,40 @@ class SMBVersionScanner(Auxiliary):
 
         print(line)
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up", os=h.os or "")
+        banner_bits = []
+        if h.preferred:
+            banner_bits.append(h.preferred)
+        if h.os:
+            banner_bits.append(h.os)
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="microsoft-ds", banner=" / ".join(banner_bits),
+        )
+        note_bits = []
+        if h.supported_versions:
+            note_bits.append("versions=" + ",".join(h.supported_versions))
+        if h.preferred:
+            note_bits.append("dialect=" + h.preferred)
+        if h.signing != "unknown":
+            note_bits.append("signing=" + h.signing)
+        if h.domain:
+            note_bits.append("domain=" + h.domain)
+        if h.os:
+            note_bits.append("os=" + h.os)
+        if h.guid:
+            note_bits.append("guid=" + h.guid)
+        if h.uptime:
+            note_bits.append("uptime=" + h.uptime)
+        if h.encryption:
+            note_bits.append("enc=" + ",".join(h.encryption))
+        if h.compression:
+            note_bits.append("comp=" + ",".join(h.compression))
+        if note_bits:
+            self.note(" ".join(note_bits), address=h.host, kind="smb_info")
+
     def check(self):
         if not self._have_impacket:
             print(colors.bad("impacket is required: pip install impacket"))
@@ -506,6 +539,9 @@ class SMBVersionScanner(Auxiliary):
         clean = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -527,6 +563,8 @@ class SMBVersionScanner(Auxiliary):
                         if r.os:
                             line += "  " + r.os
                         bar.log(colors.good(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -544,6 +582,12 @@ class SMBVersionScanner(Auxiliary):
         print("  no response:  " + colors.dimmed(str(clean)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
 
         if hits:
             print(colors.heading("  smb hosts:"))
