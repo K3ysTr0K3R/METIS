@@ -172,6 +172,25 @@ class ApachePathTraversalCVE202142013(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="Apache httpd (vulnerable)",
+        )
+        vuln_info = h.detail
+        if h.rce and h.cmd_output:
+            vuln_info += " | cmd: " + h.cmd_output
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2021-42013",
+            info=vuln_info,
+        )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -208,6 +227,9 @@ class ApachePathTraversalCVE202142013(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -225,6 +247,8 @@ class ApachePathTraversalCVE202142013(Auxiliary):
                         if r.rce and r.cmd_output:
                             line += " | " + r.cmd_output
                         bar.log(colors.vuln(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -245,6 +269,12 @@ class ApachePathTraversalCVE202142013(Auxiliary):
         print("  unknown:      " + colors.warn(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             rce_count = sum(1 for h in hits if h.rce)
             print(colors.heading("  vulnerable hosts:"))

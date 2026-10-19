@@ -217,6 +217,21 @@ class MS17_010Scanner(Auxiliary):
 
         print(line)
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="microsoft-ds", banner="",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="MS17-010",
+            info=h.status_name,
+        )
+
     def check(self):
         if not self._have_impacket:
             print(colors.bad("impacket is required: pip install impacket"))
@@ -256,6 +271,9 @@ class MS17_010Scanner(Auxiliary):
         clean = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -271,6 +289,8 @@ class MS17_010Scanner(Auxiliary):
                         if r.vulnerable == "yes":
                             vuln.append(r)
                             bar.log(colors.bad(r.host + "  VULNERABLE to MS17-010"))
+                            if workspace_active:
+                                self._record_host_result(r)
                             if stop_first:
                                 aborted = True
                                 for f in futures:
@@ -299,6 +319,12 @@ class MS17_010Scanner(Auxiliary):
         print("  no response:  " + colors.dimmed(str(clean)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and vuln:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(vuln)} host(s), {len(vuln)} service(s), "
+                f"{len(vuln)} vuln(s) in workspace '{ws}'"
+            ))
 
         if vuln:
             print(colors.heading("  vulnerable hosts:"))

@@ -9,10 +9,8 @@ from core.check import CheckResult
 from core.module import Option
 from core.progress import ProgressBar
 
-
 ZABBIX_PATHS = ["/", "/zabbix/"]
 VULN_PATH = "/zabbix.php?action=dashboard.view&dashboardid=1"
-
 
 @dataclass
 class HostResult:
@@ -112,6 +110,27 @@ class ZabbixAuthBypassScanner(Auxiliary):
 
         return HostResult(host, "safe", "HTTP " + str(st))
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="Zabbix",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="high",
+            refs="CVE-2019-17382",
+            info=h.path,
+        )
+        self.note(
+            "zabbix_dashboard=" + h.path,
+            address=h.host,
+            kind="zabbix_info",
+        )
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -139,6 +158,9 @@ class ZabbixAuthBypassScanner(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -152,6 +174,8 @@ class ZabbixAuthBypassScanner(Auxiliary):
                     if r.state == "vulnerable":
                         hits.append(r)
                         bar.log(colors.vuln(r.host + " - " + r.detail))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -172,6 +196,12 @@ class ZabbixAuthBypassScanner(Auxiliary):
         print("  unknown:      " + colors.yellow(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

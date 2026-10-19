@@ -130,6 +130,21 @@ class TelnetdAuthBypassScanner(Auxiliary):
 
         return HostResult(host, "unknown", "inconclusive response")
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name="telnet", banner="",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2026-24061",
+            info=h.detail,
+        )
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -160,6 +175,9 @@ class TelnetdAuthBypassScanner(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -174,6 +192,8 @@ class TelnetdAuthBypassScanner(Auxiliary):
                     if r.state == "vulnerable":
                         hits.append(r)
                         bar.log(colors.vuln(r.host + " - " + r.detail))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -194,6 +214,12 @@ class TelnetdAuthBypassScanner(Auxiliary):
         print("  unknown:      " + colors.yellow(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

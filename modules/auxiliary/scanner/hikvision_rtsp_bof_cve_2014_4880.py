@@ -9,7 +9,6 @@ from core.check import CheckResult
 from core.module import Option
 from core.progress import ProgressBar
 
-
 G_ADJUSTESP = 0x002c828c
 G_R3FROMSP  = 0x00446f80
 G_BLXR3_POP = 0x00456360
@@ -17,13 +16,11 @@ G_POPR3     = 0x0000fe98
 
 MARKER = "METIS_VULN_MARKER_8f3a2c"
 
-
 @dataclass
 class HostResult:
     host: str
     state: str
     detail: str = ""
-
 
 class HikvisionRTSPDetector(Auxiliary):
     NAME = "Hikvision DVR RTSP Buffer Overflow Detector (CVE-2014-4880)"
@@ -150,6 +147,21 @@ class HikvisionRTSPDetector(Auxiliary):
 
         return HostResult(host, "unknown", text[:80].strip())
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name="rtsp", banner="",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2014-4880",
+            info=h.detail,
+        )
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -181,6 +193,9 @@ class HikvisionRTSPDetector(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -195,6 +210,8 @@ class HikvisionRTSPDetector(Auxiliary):
                     if r.state == "vulnerable":
                         hits.append(r)
                         bar.log(colors.vuln(r.host + " - " + r.detail))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -215,6 +232,12 @@ class HikvisionRTSPDetector(Auxiliary):
         print("  unknown:      " + colors.warn(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:
