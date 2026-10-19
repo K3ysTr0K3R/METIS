@@ -189,6 +189,37 @@ class HTTPScraper(Auxiliary):
         result.hits.sort(key=lambda h: h.path)
         return result
 
+    def _record_host_result(self, res, svc_name):
+        self.report_host(res.host, state="up")
+
+        banner = ""
+        for hit in res.hits:
+            if hit.server:
+                banner = hit.server
+                break
+
+        self.report_service(
+            res.host, res.port,
+            proto="tcp", state="open",
+            name=svc_name, banner=banner,
+        )
+
+        for hit in res.hits:
+            bits = [
+                hit.url,
+                "[" + str(hit.status) + "]",
+                hit.title or "(no title)",
+            ]
+            if hit.server:
+                bits.append("server=" + hit.server)
+            if hit.content_type:
+                bits.append("ctype=" + hit.content_type)
+            self.note(
+                " ".join(bits),
+                address=res.host,
+                kind="http_title",
+            )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -223,6 +254,10 @@ class HTTPScraper(Auxiliary):
         hits = []
         errors = 0
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+        svc_name = "https" if self.options["SSL"] else "http"
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -233,14 +268,20 @@ class HTTPScraper(Auxiliary):
                     except Exception:
                         errors += 1
                         continue
-                    if res.hits:
-                        hits.append(res)
-                        for hit in res.hits:
-                            bar.log(colors.good(
-                                res.host + " -> " + (hit.title or "(no title)")
-                            ))
-                    elif res.error:
-                        errors += 1
+
+                    if not res.hits:
+                        if res.error:
+                            errors += 1
+                        continue
+
+                    hits.append(res)
+                    for hit in res.hits:
+                        bar.log(colors.good(
+                            res.host + " -> " + (hit.title or "(no title)")
+                        ))
+
+                    if workspace_active:
+                        self._record_host_result(res, svc_name)
         finally:
             bar.done()
 
@@ -251,6 +292,13 @@ class HTTPScraper(Auxiliary):
         print("  hosts w/title:  " + colors.green(str(len(hits))))
         print("  pages titled:   " + colors.green(str(total_pages)))
         print("  errors/skips:   " + colors.dimmed(str(errors)))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            total_notes = sum(len(h.hits) for h in hits)
+            print("  recorded:       " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{total_notes} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  titles:"))
             for h in hits:

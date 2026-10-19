@@ -8,7 +8,6 @@ from core.check import CheckResult
 from core.module import Option
 from core.progress import ProgressBar
 
-
 @dataclass
 class HostResult:
     host: str
@@ -164,6 +163,27 @@ class HTTPVersionScanner(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h, svc_name):
+        self.report_host(h.host, state="up")
+
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name=svc_name, banner=h.server or "",
+        )
+
+        bits = []
+        if h.status_line:
+            bits.append("status=" + h.status_line)
+        bits.append("server=" + (h.server or "(hidden)"))
+        if h.powered_by:
+            bits.append("x-powered-by=" + h.powered_by)
+        self.note(
+            " ".join(bits),
+            address=h.host,
+            kind="http_version",
+        )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -201,6 +221,10 @@ class HTTPVersionScanner(Auxiliary):
         clean = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+        svc_name = "https" if self.options["SSL"] else "http"
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -212,19 +236,24 @@ class HTTPVersionScanner(Auxiliary):
                         clean += 1
                         continue
 
-                    if r.state == "up":
-                        hits.append(r)
-                        bar.log(colors.good(
-                            r.host + ":" + str(r.port) + "  "
-                            + (r.server or "(no Server header)")
-                        ))
-                        if stop_first:
-                            aborted = True
-                            for f in futures:
-                                f.cancel()
-                            break
-                    else:
+                    if r.state != "up":
                         clean += 1
+                        continue
+
+                    hits.append(r)
+                    bar.log(colors.good(
+                        r.host + ":" + str(r.port) + "  "
+                        + (r.server or "(no Server header)")
+                    ))
+
+                    if workspace_active:
+                        self._record_host_result(r, svc_name)
+
+                    if stop_first:
+                        aborted = True
+                        for f in futures:
+                            f.cancel()
+                        break
         finally:
             bar.done()
 
@@ -235,6 +264,12 @@ class HTTPVersionScanner(Auxiliary):
         print("  no response:  " + colors.dimmed(str(clean)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  http hosts:"))
             for h in hits:

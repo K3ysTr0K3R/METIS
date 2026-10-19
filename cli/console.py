@@ -13,6 +13,7 @@ from core.session_manager import SessionManager
 from core.database import Database
 from handlers.reverse_tcp import ReverseTCPHandler
 
+
 GRADIENT_PRESETS = {
     "synthwave": [51, 45, 39, 135, 171, 201],
     "fire":      [226, 220, 214, 208, 202, 196],
@@ -25,6 +26,7 @@ GRADIENT_PRESETS = {
     "ocean":     [17, 18, 19, 20, 33, 39, 45, 51],
     "ember":     [88, 124, 160, 196, 202, 208],
 }
+
 
 class MetisCompleter(Completer):
     def __init__(self, console):
@@ -1495,13 +1497,6 @@ class Console:
                     print(colors.bad(f"bad RHOST override: {e}"))
                     return
                 print(colors.good(f"RHOST => {target}"))
-
-        if self.db and self.db.current_workspace_id():
-            for t in self.active_module.resolve_targets():
-                try:
-                    self.db.ensure_host(t)
-                except Exception:
-                    pass
 
         try:
             self.active_module.run()

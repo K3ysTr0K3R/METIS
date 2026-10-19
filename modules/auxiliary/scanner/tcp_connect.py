@@ -1,10 +1,8 @@
 import socket
-from concurrent.futures import ThreadPoolExecutor
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from core import colors
 from core.auxiliary import Auxiliary
 from core.module import Option
-
 
 class TCPConnectScanner(Auxiliary):
     NAME = "TCP Connect Port Scanner"
@@ -50,11 +48,34 @@ class TCPConnectScanner(Auxiliary):
         s.settimeout(timeout)
         try:
             s.connect((host, port))
-            return host, port, True
+            banner = ""
+            try:
+                s.settimeout(max(timeout, 0.5))
+                raw = s.recv(256)
+                if raw and all(0x20 <= b <= 0x7e or b in (0x09, 0x0a, 0x0d) for b in raw):
+                    banner = raw.decode("ascii", errors="ignore").strip()
+            except (socket.timeout, OSError):
+                banner = ""
+            return host, port, True, banner
         except (socket.timeout, ConnectionRefusedError, OSError):
-            return host, port, False
+            return host, port, False, ""
         finally:
             s.close()
+
+    def _record_open_port(self, host, port, banner):
+        db = self._db()
+        if not db:
+            return
+        try:
+            db.ensure_host(host, state="up")
+            db.add_service(
+                host, port,
+                proto="tcp",
+                state="open",
+                banner=banner[:200] if banner else "",
+            )
+        except Exception:
+            pass
 
     def action(self):
         targets = self._expand_targets()
@@ -74,11 +95,27 @@ class TCPConnectScanner(Auxiliary):
                 ex.submit(self._scan_one, h, p, timeout)
                 for h in targets for p in ports
             ]
-            for fut in futures:
-                host, port, is_open = fut.result()
-                if is_open:
-                    open_ports.append((host, port))
-                    print(colors.good(f"{host}:{port} open"))
+            for fut in as_completed(futures):
+                host, port, is_open, banner = fut.result()
+                if not is_open:
+                    continue
+                open_ports.append((host, port))
+                display = f"{host}:{port} open"
+                if banner:
+                    display += f"  [{banner.splitlines()[0][:60]}]"
+                print(colors.good(display))
+                self._record_open_port(host, port, banner)
+
+        db = self._db()
+        if db and db.current_workspace_id():
+            try:
+                db.log_event(
+                    f"tcp_connect scan: {len(targets)} host(s), "
+                    f"{len(ports)} port(s), {len(open_ports)} open",
+                    kind="scan",
+                )
+            except Exception:
+                pass
 
         print(colors.info(f"done. {len(open_ports)} open port(s)."))
         return open_ports
