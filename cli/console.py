@@ -10,8 +10,8 @@ from prompt_toolkit.history import FileHistory
 from core import colors
 from core.module_manager import ModuleManager
 from core.session_manager import SessionManager
+from core.database import Database
 from handlers.reverse_tcp import ReverseTCPHandler
-
 
 GRADIENT_PRESETS = {
     "synthwave": [51, 45, 39, 135, 171, 201],
@@ -25,7 +25,6 @@ GRADIENT_PRESETS = {
     "ocean":     [17, 18, 19, 20, 33, 39, 45, 51],
     "ember":     [88, 124, 160, 196, 202, 208],
 }
-
 
 class MetisCompleter(Completer):
     def __init__(self, console):
@@ -84,7 +83,9 @@ class MetisCompleter(Completer):
                     yield s.id
             return
         if cmd == "show":
-            for o in ("modules", "options", "info", "globals", "themes", "payloads", "spool"):
+            for o in ("modules", "options", "info", "globals", "themes",
+                      "payloads", "spool", "workspaces", "hosts", "services",
+                      "vulns", "creds", "notes", "loot", "events"):
                 if o.startswith(partial):
                     yield o
             return
@@ -99,11 +100,29 @@ class MetisCompleter(Completer):
                 if name.startswith(partial.upper()):
                     yield name
             return
+        if cmd == "workspace":
+            if c.db:
+                for w in c.db.list_workspaces():
+                    if w["name"].startswith(partial):
+                        yield w["name"]
+            return
+        if cmd in ("hosts", "vulns", "creds", "notes", "loot"):
+            if c.db:
+                for h in c.db.list_hosts():
+                    if h["address"].startswith(partial):
+                        yield h["address"]
+            return
+        if cmd == "services":
+            if c.db:
+                for h in c.db.list_hosts():
+                    if h["address"].startswith(partial):
+                        yield h["address"]
+            return
 
 
 class Console:
     BASE_PROMPT = "metis"
-    VERSION = "1.2.0"
+    VERSION = "1.3.0"
     REPO = "K3ysTr0K3R/METIS"
     BANNER = (
         "███╗   ███╗███████╗████████╗██╗███████╗\n"
@@ -112,13 +131,15 @@ class Console:
         "██║╚██╔╝██║██╔══╝     ██║   ██║╚════██║\n"
         "██║ ╚═╝ ██║███████╗   ██║   ██║███████║\n"
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
-        "K3ysTr0K3R                    v1.2.0\n"
+        "K3ysTr0K3R                    v1.3.0\n"
         "\n"
         "Modular Exploitation & Threat Intelligence Framework\n"
     )
 
     def __init__(self):
+        self.db = Database()
         self.sessions = SessionManager()
+        self.sessions.db = self.db
         self.modules = ModuleManager(root="modules")
         self.handlers = []
         self.active_module = None
@@ -272,6 +293,9 @@ class Console:
         cat_color = colors.wrap_fallback("prompt_category", "prompt")
         path_color = colors.wrap("prompt")
 
+        ws = self.db.current_workspace() if self.db else None
+        ws_tag = colors.dimmed(f"[{ws}] ") if ws else ""
+
         base = self.BASE_PROMPT
         if self.active_path:
             category, _, rest = self.active_path.partition("/")
@@ -281,7 +305,9 @@ class Console:
             user = user_color(base)
             cat = cat_color(category)
             rest_padded = path_color(f"({rest})") if rest else ""
-            return f"{user} {cat}{rest_padded}{src} > "
+            return f"{user} {ws_tag}{cat}{rest_padded}{src}{user_color(' > ')}"
+        if ws:
+            return f"{user_color(base)} {ws_tag}{user_color('> ')}"
         return user_color(f"{base} > ")
 
     def _run_local(self, cmd, echo=False):
@@ -542,6 +568,475 @@ class Console:
         """reap  — drop dead sessions"""
         self.sessions.reap()
 
+    def do_workspace(self, args):
+        """workspace [<name>|add <name>|del <name>|info|reset|clear]  — manage workspaces"""
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if not sub or sub == "list":
+            current = self.db.current_workspace()
+            rows = self.db.list_workspaces()
+            if not rows:
+                print(colors.info("no workspaces — create one with 'workspace add <name>'"))
+                return
+            print(colors.heading("  Workspaces"))
+            print(colors.dimmed("  ----------"))
+            for w in rows:
+                marker = colors.good("(current)") if w["name"] == current else ""
+                print(f"  {w['name'].ljust(20)} {marker}")
+            return
+
+        if sub == "clear":
+            self.db.set_workspace(None)
+            print(colors.info("no active workspace"))
+            return
+
+        if sub == "info":
+            name = rest or self.db.current_workspace()
+            if not name:
+                print(colors.warn("no active workspace — specify a name"))
+                return
+            prev = self.db.current_workspace()
+            if not self.db.set_workspace(name):
+                print(colors.bad(f"no such workspace: {name}"))
+                return
+            stats = self.db.stats()
+            print(colors.heading(f"workspace: {name}"))
+            for k, v in stats.items():
+                print(f"  {k.ljust(12)} {v}")
+            if prev != name:
+                self.db.set_workspace(prev)
+            return
+
+        if sub == "add":
+            name = rest
+            if not name:
+                print(colors.warn("usage: workspace add <name>"))
+                return
+            wid = self.db.create_workspace(name)
+            if wid:
+                self.db.set_workspace(name)
+                print(colors.good(f"workspace created and activated: {name}"))
+            return
+
+        if sub == "del":
+            name = rest
+            if not name:
+                print(colors.warn("usage: workspace del <name>"))
+                return
+            answer = self._session.prompt(
+                ANSI(colors.warn(f"delete workspace '{name}' and all its data? [y/N] "))
+            )
+            if answer.strip().lower() != "y":
+                print(colors.info("aborted"))
+                return
+            try:
+                if self.db.delete_workspace(name):
+                    print(colors.good(f"workspace deleted: {name}"))
+                else:
+                    print(colors.bad(f"no such workspace: {name}"))
+            except ValueError as e:
+                print(colors.bad(str(e)))
+            return
+
+        if sub == "reset":
+            name = rest or self.db.current_workspace()
+            if not name:
+                print(colors.warn("no active workspace — specify a name"))
+                return
+            answer = self._session.prompt(
+                ANSI(colors.warn(f"wipe all data in workspace '{name}'? [y/N] "))
+            )
+            if answer.strip().lower() != "y":
+                print(colors.info("aborted"))
+                return
+            if self.db.reset_workspace(name):
+                print(colors.good(f"workspace reset: {name}"))
+            else:
+                print(colors.bad(f"no such workspace: {name}"))
+            return
+
+        if self.db.set_workspace(sub):
+            print(colors.good(f"workspace -> {sub}"))
+        else:
+            print(colors.bad(f"no such workspace: {sub}"))
+
+    def do_hosts(self, args):
+        """hosts [add|del|info] [args]  — list/manage hosts in the workspace"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if not sub or sub == "list":
+            rows = self.db.list_hosts()
+            if not rows:
+                print(colors.info("no hosts in workspace"))
+                return
+            print(colors.heading(
+                f"  {'Address'.ljust(20)} {'Name'.ljust(16)} "
+                f"{'OS'.ljust(14)} {'State'.ljust(8)} Last Seen"
+            ))
+            print(colors.dimmed(
+                f"  {'-'*20} {'-'*16} {'-'*14} {'-'*8} {'-'*16}"
+            ))
+            for h in rows:
+                print(
+                    f"  {h['address'].ljust(20)} "
+                    f"{(h['name'] or '.').ljust(16)} "
+                    f"{(h['os'] or '.').ljust(14)} "
+                    f"{(h['state'] or '.').ljust(8)} "
+                    f"{self._fmt_ts(h['updated_at'])}"
+                )
+            print(colors.dimmed(f"  ({len(rows)} host(s))"))
+            return
+
+        if sub == "add":
+            address = rest
+            if not address:
+                print(colors.warn("usage: hosts add <address>"))
+                return
+            self.db.ensure_host(address)
+            print(colors.good(f"host added: {address}"))
+            return
+
+        if sub == "del":
+            address = rest
+            if not address:
+                print(colors.warn("usage: hosts del <address>"))
+                return
+            if self.db.delete_host(address):
+                print(colors.good(f"host deleted: {address}"))
+            else:
+                print(colors.bad(f"no such host: {address}"))
+            return
+
+        if sub == "info":
+            address = rest
+            if not address:
+                print(colors.warn("usage: hosts info <address>"))
+                return
+            h = self.db.get_host(address)
+            if not h:
+                print(colors.bad(f"no such host: {address}"))
+                return
+            print(colors.heading("Address:   ") + h["address"])
+            print(colors.heading("Name:      ") + (h["name"] or "."))
+            print(colors.heading("OS:        ") + (h["os"] or "."))
+            print(colors.heading("State:     ") + h["state"])
+            print(colors.heading("Info:      ") + (h["info"] or "."))
+            print(colors.heading("First seen:") + " " + self._fmt_ts(h["created_at"]))
+            print(colors.heading("Last seen: ") + self._fmt_ts(h["updated_at"]))
+            services = self.db.list_services(address)
+            if services:
+                print()
+                print(colors.heading("Services:"))
+                for s in services:
+                    print(f"  {s['port']}/{s['proto']}  {s['name']}  {s['banner']}")
+            return
+
+        print(colors.warn("usage: hosts [add|del|info] [args]"))
+
+    def do_services(self, args):
+        """services [<host>|add <host> <port> [name]|del <id>]  — manage services"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        parts = args.strip().split(maxsplit=2)
+        sub = parts[0].lower() if parts else ""
+
+        if not sub or sub == "list":
+            rows = self.db.list_services()
+            if not rows:
+                print(colors.info("no services in workspace"))
+                return
+            print(colors.heading(
+                f"  {'Host'.ljust(20)} {'Port'.ljust(6)} {'Proto'.ljust(6)} "
+                f"{'Name'.ljust(14)} Banner"
+            ))
+            print(colors.dimmed(
+                f"  {'-'*20} {'-'*6} {'-'*6} {'-'*14} {'-'*20}"
+            ))
+            for s in rows:
+                print(
+                    f"  {s['address'].ljust(20)} "
+                    f"{str(s['port']).ljust(6)} "
+                    f"{s['proto'].ljust(6)} "
+                    f"{(s['name'] or '.').ljust(14)} "
+                    f"{s['banner']}"
+                )
+            print(colors.dimmed(f"  ({len(rows)} service(s))"))
+            return
+
+        if sub == "add":
+            if len(parts) < 3:
+                print(colors.warn("usage: services add <host> <port> [name]"))
+                return
+            host, port, name = parts
+            try:
+                port = int(port)
+            except ValueError:
+                print(colors.bad("port must be an integer"))
+                return
+            self.db.add_service(host, port, name=name)
+            print(colors.good(f"service added: {host}:{port}"))
+            return
+
+        if sub == "del":
+            try:
+                sid = int(parts[1])
+            except (ValueError, IndexError):
+                print(colors.warn("usage: services del <id>"))
+                return
+            if self.db.delete_service(sid):
+                print(colors.good(f"service {sid} deleted"))
+            else:
+                print(colors.bad(f"no such service: {sid}"))
+            return
+
+        rows = self.db.list_services(sub)
+        if not rows:
+            print(colors.info(f"no services for {sub}"))
+            return
+        for s in rows:
+            print(
+                f"  {s['address']}:{s['port']}/{s['proto']}  "
+                f"{s['name']}  {s['banner']}"
+            )
+
+    def do_vulns(self, args):
+        """vulns [<host>|del <id>]  — list/delete recorded vulnerabilities"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub == "del":
+            try:
+                vid = int(parts[1])
+            except (ValueError, IndexError):
+                print(colors.warn("usage: vulns del <id>"))
+                return
+            if self.db.delete_vuln(vid):
+                print(colors.good(f"vuln {vid} deleted"))
+            else:
+                print(colors.bad(f"no such vuln: {vid}"))
+            return
+
+        host = sub or None
+        rows = self.db.list_vulns(host)
+        if not rows:
+            print(colors.info("no vulns recorded"))
+            return
+        print(colors.heading(
+            f"  {'ID'.ljust(4)} {'Host'.ljust(20)} {'Sev'.ljust(8)} "
+            f"{'Name'.ljust(28)} Module"
+        ))
+        print(colors.dimmed(
+            f"  {'-'*4} {'-'*20} {'-'*8} {'-'*28} {'-'*20}"
+        ))
+        for v in rows:
+            sev = v["severity"] or "unknown"
+            sev_col = colors.bad(sev) if sev in ("high", "critical") else colors.warn(sev) if sev == "medium" else colors.dimmed(sev)
+            print(
+                f"  {str(v['id']).ljust(4)} "
+                f"{(v['address'] or '.').ljust(20)} "
+                f"{sev_col.ljust(8)} "
+                f"{v['name'].ljust(28)} "
+                f"{v['module']}"
+            )
+        print(colors.dimmed(f"  ({len(rows)} vuln(s))"))
+
+    def do_creds(self, args):
+        """creds [del <id>]  — list/delete credentials"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub == "del":
+            try:
+                cid = int(parts[1])
+            except (ValueError, IndexError):
+                print(colors.warn("usage: creds del <id>"))
+                return
+            if self.db.delete_cred(cid):
+                print(colors.good(f"cred {cid} deleted"))
+            else:
+                print(colors.bad(f"no such cred: {cid}"))
+            return
+
+        rows = self.db.list_creds()
+        if not rows:
+            print(colors.info("no creds recorded"))
+            return
+        print(colors.heading(
+            f"  {'ID'.ljust(4)} {'Host'.ljust(20)} {'User'.ljust(20)} "
+            f"{'Kind'.ljust(10)} Secret"
+        ))
+        print(colors.dimmed(f"  {'-'*4} {'-'*20} {'-'*20} {'-'*10} {'-'*20}"))
+        for c in rows:
+            secret = c["secret"]
+            if len(secret) > 20:
+                secret = secret[:17] + "..."
+            print(
+                f"  {str(c['id']).ljust(4)} "
+                f"{(c['address'] or '.').ljust(20)} "
+                f"{(c['username'] or '.').ljust(20)} "
+                f"{c['kind'].ljust(10)} "
+                f"{secret}"
+            )
+
+    def do_notes(self, args):
+        """notes [add <data> | del <id>]  — list/add/delete notes"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub == "add":
+            data = parts[1].strip() if len(parts) > 1 else ""
+            if not data:
+                print(colors.warn("usage: notes add <text>"))
+                return
+            self.db.add_note(data)
+            print(colors.good("note added"))
+            return
+
+        if sub == "del":
+            try:
+                nid = int(parts[1])
+            except (ValueError, IndexError):
+                print(colors.warn("usage: notes del <id>"))
+                return
+            if self.db.delete_note(nid):
+                print(colors.good(f"note {nid} deleted"))
+            else:
+                print(colors.bad(f"no such note: {nid}"))
+            return
+
+        rows = self.db.list_notes()
+        if not rows:
+            print(colors.info("no notes"))
+            return
+        for n in rows:
+            print(f"  {colors.session(str(n['id']).rjust(4))}  "
+                  f"{self._fmt_ts(n['created_at'])}  {n['data']}")
+
+    def do_loot(self, args):
+        """loot [del <id>]  — list/delete loot"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else ""
+
+        if sub == "del":
+            try:
+                lid = int(parts[1])
+            except (ValueError, IndexError):
+                print(colors.warn("usage: loot del <id>"))
+                return
+            if self.db.delete_loot(lid):
+                print(colors.good(f"loot {lid} deleted"))
+            else:
+                print(colors.bad(f"no such loot: {lid}"))
+            return
+
+        rows = self.db.list_loot()
+        if not rows:
+            print(colors.info("no loot"))
+            return
+        print(colors.heading(
+            f"  {'ID'.ljust(4)} {'Host'.ljust(20)} {'Kind'.ljust(12)} "
+            f"{'Size'.ljust(8)} Path"
+        ))
+        print(colors.dimmed(f"  {'-'*4} {'-'*20} {'-'*12} {'-'*8} {'-'*20}"))
+        for l in rows:
+            print(
+                f"  {str(l['id']).ljust(4)} "
+                f"{(l['address'] or '.').ljust(20)} "
+                f"{(l['kind'] or '.').ljust(12)} "
+                f"{str(l['size']).ljust(8)} "
+                f"{l['path']}"
+            )
+
+    def do_events(self, args):
+        """events  — list recent workspace events"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+        limit = 100
+        if args.strip():
+            try:
+                limit = int(args.strip())
+            except ValueError:
+                pass
+        rows = self.db.list_events(limit=limit)
+        if not rows:
+            print(colors.info("no events"))
+            return
+        for e in rows:
+            ts = self._fmt_ts(e["created_at"])
+            host = e["address"] or "."
+            print(f"  {ts}  {host.ljust(20)}  {e['message']}")
+
+    def do_db(self, args):
+        """db [status|stats|reset]  — database operations"""
+        sub = args.strip().lower()
+
+        if not sub or sub == "status":
+            print(colors.heading("database status"))
+            print(f"  path:      {self.db.path}")
+            ws = self.db.current_workspace()
+            print(f"  workspace: {ws if ws else '(none)'}")
+            print(f"  file size: {self.db.size_bytes()} bytes")
+            return
+
+        if sub == "stats":
+            ws = self.db.current_workspace()
+            if not ws:
+                print(colors.warn("no active workspace — run 'workspace <name>' first"))
+                return
+            stats = self.db.stats()
+            print(colors.heading(f"workspace: {ws}"))
+            for k, v in stats.items():
+                print(f"  {k.ljust(12)} {v}")
+            return
+
+        if sub == "reset":
+            ws = self.db.current_workspace()
+            if not ws:
+                print(colors.warn("no active workspace — run 'workspace <name>' first"))
+                return
+            answer = self._session.prompt(
+                ANSI(colors.warn("wipe ALL data in current workspace? [y/N] "))
+            )
+            if answer.strip().lower() != "y":
+                print(colors.info("aborted"))
+                return
+            self.db.reset_workspace(ws)
+            print(colors.good("workspace reset"))
+            return
+
+        print(colors.warn("usage: db [status|stats|reset]"))
+
+    @staticmethod
+    def _fmt_ts(ts):
+        from datetime import datetime
+        if not ts:
+            return "."
+        try:
+            return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, OSError):
+            return str(ts)
+
     def _rank_color(self, rank):
         r = rank.lower()
         if r == "excellent":
@@ -721,7 +1216,7 @@ class Console:
         print(colors.dimmed(f"  ({len(hits)} match(es). Use 'use N' to select by number.)"))
 
     def do_show(self, args):
-        """show modules | options | info | globals | themes | payloads | spool"""
+        """show modules | options | info | globals | themes | payloads | spool | workspaces | hosts | services | vulns | creds | notes | loot | events"""
         what = args.strip().split()[0] if args.strip() else ""
         if what == "modules":
             rows = [self.modules.metadata(p) for p in self.modules.list()]
@@ -751,9 +1246,27 @@ class Console:
                 print(colors.info("spooling to: " + self._spool_file))
             else:
                 print(colors.info("spooling: off"))
+        elif what == "workspaces":
+            self.do_workspace("")
+        elif what == "hosts":
+            self.do_hosts("")
+        elif what == "services":
+            self.do_services("")
+        elif what == "vulns":
+            self.do_vulns("")
+        elif what == "creds":
+            self.do_creds("")
+        elif what == "notes":
+            self.do_notes("")
+        elif what == "loot":
+            self.do_loot("")
+        elif what == "events":
+            self.do_events("")
         else:
             print(colors.warn(
-                "usage: show modules | options | info | globals | themes | payloads | spool"
+                "usage: show modules | options | info | globals | themes | "
+                "payloads | spool | workspaces | hosts | services | vulns | "
+                "creds | notes | loot | events"
             ))
 
     def do_options(self, _):
@@ -931,6 +1444,29 @@ class Console:
         from core.check import CheckResult
         print(colors.info(f"check -> {CheckResult.colorize(result)}"))
 
+        if self.db and self.db.current_workspace_id() and result == CheckResult.VULNERABLE:
+            targets = self.active_module.resolve_targets()
+            name = self.active_module.NAME or self.active_path
+            for t in targets:
+                self.db.ensure_host(t, state="up")
+                self.db.add_vuln(
+                    name=name,
+                    module=self.active_path,
+                    host_address=t,
+                    severity="unknown",
+                    info="check() returned vulnerable",
+                )
+            if not targets:
+                self.db.add_vuln(
+                    name=name,
+                    module=self.active_path,
+                    severity="unknown",
+                    info="check() returned vulnerable (no target recorded)",
+                )
+            print(colors.dimmed(
+                f"  (vuln recorded in workspace '{self.db.current_workspace()}')"
+            ))
+
     def do_run(self, args):
         """run [target]  — execute the active module"""
         self._run_active(args)
@@ -959,6 +1495,14 @@ class Console:
                     print(colors.bad(f"bad RHOST override: {e}"))
                     return
                 print(colors.good(f"RHOST => {target}"))
+
+        if self.db and self.db.current_workspace_id():
+            for t in self.active_module.resolve_targets():
+                try:
+                    self.db.ensure_host(t)
+                except Exception:
+                    pass
+
         try:
             self.active_module.run()
         except ValueError as e:
@@ -1195,7 +1739,7 @@ class Console:
                 summary = summary[len(cmd):].lstrip(" —-")
             print(f"  {colors.session(cmd.ljust(width))} {summary}")
         print()
-        print(colors.dimmed("  tab completes commands, module paths, session IDs, options"))
+        print(colors.dimmed("  tab completes commands, module paths, session IDs, options, workspaces"))
         print(colors.dimmed("  any unrecognised command is passed to your local shell"))
 
     def do_clear(self, _):

@@ -1,5 +1,4 @@
 import os
-
 from core import colors
 from core.rc import parse_source_file
 from core.targets import parse_targets
@@ -82,7 +81,7 @@ class Module:
             key=lambda kv: (not kv[1].required, kv[0]),
         )
         wname = max((len(n) for n in self.options), default=8)
-        wreq  = 3
+        wreq = 3
 
         print(colors.heading(f"  {'Name'.ljust(wname)}  {'Req'.ljust(wreq)}  Value"))
         print(colors.dimmed(f"  {'-'*wname}  {'-'*wreq}  -----"))
@@ -94,12 +93,6 @@ class Module:
             print(f"  {name.ljust(wname)}  {req_pad}  {shown}")
 
     def resolve_targets(self) -> list[str]:
-        """
-        Return a flat list of hosts from RHOSTS (preferred) or RHOST.
-
-        RHOSTS supports comma lists, CIDR, ranges (a-b), and file: prefix.
-        RHOST is treated as a single host or CIDR for backwards compat.
-        """
         if "RHOSTS" in self.options and self.options["RHOSTS"]:
             return parse_targets(self.options["RHOSTS"])
         if "RHOST" in self.options and self.options["RHOST"]:
@@ -131,9 +124,63 @@ class Module:
         return True
 
     def check(self):
-        """Override in subclasses. Return a CheckResult value."""
         from core.check import CheckResult
         return CheckResult.UNKNOWN
 
     def run(self):
         raise NotImplementedError
+
+    def _db(self):
+        if self.framework is None:
+            return None
+        return getattr(self.framework, "db", None)
+
+    def report_host(self, address, **kwargs):
+        db = self._db()
+        if not db:
+            return None
+        try:
+            return db.ensure_host(address, **kwargs)
+        except Exception:
+            return None
+
+    def report_service(self, address, port, proto="tcp", **kwargs):
+        db = self._db()
+        if not db:
+            return None
+        try:
+            return db.add_service(address, port, proto=proto, **kwargs)
+        except Exception:
+            return None
+
+    def report_vuln(self, name, address=None, **kwargs):
+        db = self._db()
+        if not db:
+            return None
+        try:
+            return db.add_vuln(
+                name=name,
+                host_address=address,
+                module=self.NAME or type(self).__name__,
+                **kwargs,
+            )
+        except Exception:
+            return None
+
+    def report_cred(self, address, username, secret, **kwargs):
+        db = self._db()
+        if not db:
+            return None
+        try:
+            return db.add_cred(address, username, secret, **kwargs)
+        except Exception:
+            return None
+
+    def note(self, data, address=None, kind="note"):
+        db = self._db()
+        if not db:
+            return None
+        try:
+            return db.add_note(data, host_address=address, kind=kind)
+        except Exception:
+            return None
