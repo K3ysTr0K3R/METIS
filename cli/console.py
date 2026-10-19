@@ -124,7 +124,7 @@ class MetisCompleter(Completer):
 
 class Console:
     BASE_PROMPT = "metis"
-    VERSION = "1.3.0"
+    VERSION = "1.4.0"
     REPO = "K3ysTr0K3R/METIS"
     BANNER = (
         "███╗   ███╗███████╗████████╗██╗███████╗\n"
@@ -133,7 +133,7 @@ class Console:
         "██║╚██╔╝██║██╔══╝     ██║   ██║╚════██║\n"
         "██║ ╚═╝ ██║███████╗   ██║   ██║███████║\n"
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
-        "K3ysTr0K3R                    v1.3.0\n"
+        "K3ysTr0K3R                    v1.4.0\n"
         "\n"
         "Modular Exploitation & Threat Intelligence Framework\n"
     )
@@ -1028,6 +1028,79 @@ class Console:
             return
 
         print(colors.warn("usage: db [status|stats|reset]"))
+
+    def do_db_nmap(self, args):
+        """db_nmap <nmap args>  — run nmap and import results into the active workspace"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+
+        nmap_args = args.strip()
+        if not nmap_args:
+            print(colors.warn("usage: db_nmap <nmap args>"))
+            print(colors.dimmed("  e.g. db_nmap -sV -O 192.168.1.0/24"))
+            print(colors.dimmed("  flags -oX / -oN are stripped automatically"))
+            return
+
+        parts = [p for p in nmap_args.split()
+                 if not (p == "-oX" or p.startswith("-oX")
+                         or p == "-oN" or p.startswith("-oN"))]
+        cleaned = " ".join(parts)
+
+        from core.nmap_import import nmap_available, run_nmap, parse_nmap_xml, import_to_db
+
+        if not nmap_available():
+            print(colors.bad("nmap not found on PATH"))
+            return
+
+        print(colors.info(f"db_nmap: nmap {cleaned}"))
+        print(colors.dimmed("  this may take a while depending on scan options"))
+
+        try:
+            xml = run_nmap(cleaned, timeout=3600.0)
+        except Exception as e:
+            print(colors.bad(f"nmap failed: {e}"))
+            return
+
+        try:
+            parsed = parse_nmap_xml(xml)
+        except Exception as e:
+            print(colors.bad(f"parse failed: {e}"))
+            return
+
+        print(colors.info(
+            f"  nmap completed: {len(parsed['hosts'])} host(s) up, "
+            f"{parsed['runstats'].get('elapsed', 0):.1f}s"
+        ))
+
+        try:
+            counts = import_to_db(self.db, parsed)
+        except Exception as e:
+            print(colors.bad(f"import failed: {e}"))
+            return
+
+        ws = self.db.current_workspace()
+        print(colors.good(
+            f"db_nmap: imported into workspace '{ws}': "
+            f"{counts['hosts']} host(s), {counts['services']} service(s), "
+            f"{counts['notes']} note(s)"
+        ))
+
+        if parsed["hosts"]:
+            print()
+            print(colors.heading("  imported hosts:"))
+            for h in parsed["hosts"][:20]:
+                line = "    " + colors.good(h["address"])
+                if h.get("hostname"):
+                    line += "  " + colors.dimmed(h["hostname"])
+                if h.get("os"):
+                    line += "  " + colors.session(h["os"])
+                svc_count = len(h.get("services") or [])
+                if svc_count:
+                    line += "  " + colors.dimmed(f"({svc_count} service(s))")
+                print(line)
+            if len(parsed["hosts"]) > 20:
+                print(colors.dimmed(f"    ... {len(parsed['hosts']) - 20} more"))
 
     @staticmethod
     def _fmt_ts(ts):
