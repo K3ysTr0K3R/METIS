@@ -11,7 +11,6 @@ from core.progress import ProgressBar
 
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
-
 CRED_PATTERN = re.compile(
     b"[a-zA-Z0-9]{0,10}"
     b"(admin|user|guest|root|operator|supervisor|tech|service|manager|default|demo|666666|888888)"
@@ -121,6 +120,28 @@ class GoAheadCredLeak(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="GoAhead",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2017-8225",
+            info="system.ini leak | " + str(len(h.creds)) + " cred(s)",
+        )
+        for user, pwd in h.creds:
+            self.report_cred(
+                h.host, user, pwd,
+                kind="password",
+                info="CVE-2017-8225 system.ini leak",
+            )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -150,6 +171,9 @@ class GoAheadCredLeak(Auxiliary):
         errors = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._check_host, h, bar): h for h in targets}
@@ -164,6 +188,8 @@ class GoAheadCredLeak(Auxiliary):
                         hits.append(res)
                         for u, p in res.creds:
                             bar.log(colors.vuln(res.host + " — " + u + ":" + p))
+                        if workspace_active:
+                            self._record_host_result(res)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -181,6 +207,13 @@ class GoAheadCredLeak(Auxiliary):
         print("  errors/skips: " + colors.dimmed(str(errors)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            total_creds = sum(len(h.creds) for h in hits)
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s), {total_creds} cred(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  credentials leaked:"))
             for h in hits:

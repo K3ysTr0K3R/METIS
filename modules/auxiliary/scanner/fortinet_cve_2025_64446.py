@@ -97,6 +97,25 @@ class FortiWebAuthBypass(Auxiliary):
         result.error = f"HTTP {r.status_code}"
         return result
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="FortiWeb",
+        )
+        info = "traversal reached fwbcgi"
+        if h.errcode is not None:
+            info += " | errcode=" + str(h.errcode)
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2025-64446",
+            info=info,
+        )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -124,6 +143,9 @@ class FortiWebAuthBypass(Auxiliary):
         errors = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._check_host, h, bar): h for h in targets}
@@ -138,6 +160,8 @@ class FortiWebAuthBypass(Auxiliary):
                         hits.append(res)
                         sig = f"errcode={res.errcode}" if res.errcode is not None else "HTTP 200"
                         bar.log(colors.vuln(f"{res.host} — {sig}"))
+                        if workspace_active:
+                            self._record_host_result(res)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -154,6 +178,12 @@ class FortiWebAuthBypass(Auxiliary):
         print(f"  errors/skips: {colors.dimmed(str(errors))}")
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

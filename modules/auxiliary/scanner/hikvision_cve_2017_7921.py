@@ -18,7 +18,8 @@ class HostResult:
     vulnerable: bool = False
     users: list = field(default_factory=list)
     error: str | None = None
-    
+
+
 class HikvisionAuthBypass(Auxiliary):
     NAME = "Hikvision IP Camera Authentication Bypass (CVE-2017-7921)"
     DESCRIPTION = (
@@ -112,6 +113,28 @@ class HikvisionAuthBypass(Auxiliary):
 
             pass
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="Hikvision",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2017-7921",
+            info="auth bypass | users=" + ",".join(h.users or ["?"]),
+        )
+        for user in (h.users or []):
+            self.report_cred(
+                h.host, user, "",
+                kind="username",
+                info="CVE-2017-7921 user enumeration",
+            )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -141,6 +164,9 @@ class HikvisionAuthBypass(Auxiliary):
         errors = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._check_host, h, bar): h for h in targets}
@@ -155,6 +181,8 @@ class HikvisionAuthBypass(Auxiliary):
                         hits.append(res)
                         users = ", ".join(res.users) if res.users else "?"
                         bar.log(colors.vuln(f"{res.host} — users: {users}"))
+                        if workspace_active:
+                            self._record_host_result(res)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -171,6 +199,12 @@ class HikvisionAuthBypass(Auxiliary):
         print(f"  errors/skips: {colors.dimmed(str(errors))}")
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

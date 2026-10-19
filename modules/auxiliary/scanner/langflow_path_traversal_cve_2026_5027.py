@@ -6,7 +6,6 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-
 from core import colors
 from core.auxiliary import Auxiliary
 from core.check import CheckResult
@@ -48,7 +47,7 @@ class LangflowPathTraversalScanner(Auxiliary):
         "and cleans up. Non-destructive."
     )
     AUTHOR = "K3ysTr0K3R"
-    RANK = "critical"
+    RANK = "excellent"
     DISCLOSED = "2026-03-27"
     CHECK = True
     REFERENCES = [
@@ -294,6 +293,29 @@ class LangflowPathTraversalScanner(Auxiliary):
 
         return result
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="Langflow" + (" " + h.version if h.version else ""),
+        )
+        info = h.detail + " | auth=" + (h.auth_method or "?")
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2026-5027",
+            info=info,
+        )
+        if h.written_path:
+            self.note(
+                "langflow_write=" + h.written_path,
+                address=h.host,
+                kind="langflow_write",
+            )
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -338,6 +360,9 @@ class LangflowPathTraversalScanner(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -356,6 +381,8 @@ class LangflowPathTraversalScanner(Auxiliary):
                             line += " (" + r.version + ")"
                         line += " - " + r.detail
                         bar.log(colors.vuln(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -377,6 +404,12 @@ class LangflowPathTraversalScanner(Auxiliary):
         print("  unknown:      " + colors.yellow(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

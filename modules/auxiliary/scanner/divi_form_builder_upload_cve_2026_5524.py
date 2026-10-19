@@ -54,7 +54,7 @@ class DiviFormBuilderUploadScanner(Auxiliary):
         "no shell, no persistence."
     )
     AUTHOR = "K3ysTr0K3R"
-    RANK = "critical"
+    RANK = "excellent"
     DISCLOSED = "2026-04-16"
     CHECK = True
     REFERENCES = [
@@ -177,7 +177,6 @@ class DiviFormBuilderUploadScanner(Auxiliary):
             return result
 
         result.form_path = form_path
-        print(colors.dimmed("  " + host + ": form at " + form_path + " (nonce " + nonce + ")"))
 
         marker = _rand_token(16)
         marker_hash = hashlib.md5(marker.encode()).hexdigest()
@@ -210,6 +209,28 @@ class DiviFormBuilderUploadScanner(Auxiliary):
 
         result.detail = "upload succeeded but .phtml did not execute"
         return result
+
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="WordPress/Divi",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2026-5524",
+            info=h.detail + " | " + h.upload_url,
+        )
+        if h.upload_url:
+            self.note(
+                "divi_upload=" + h.upload_url,
+                address=h.host,
+                kind="divi_upload",
+            )
 
     def check(self):
         targets = self._expand_targets()
@@ -248,6 +269,9 @@ class DiviFormBuilderUploadScanner(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -262,6 +286,8 @@ class DiviFormBuilderUploadScanner(Auxiliary):
                     if r.state == "vulnerable":
                         hits.append(r)
                         bar.log(colors.vuln(r.host + " - " + r.detail))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -282,6 +308,12 @@ class DiviFormBuilderUploadScanner(Auxiliary):
         print("  unknown:      " + colors.yellow(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

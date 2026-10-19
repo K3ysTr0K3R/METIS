@@ -145,6 +145,27 @@ class MikrotikWinboxCreds(Auxiliary):
         res.error = err
         return res
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="winbox", banner="MikroTik RouterOS (vulnerable)",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2018-14847",
+            info="WinBox traversal | " + str(len(h.creds)) + " cred(s) leaked",
+        )
+        for user, pwd in h.creds:
+            self.report_cred(
+                h.host, user, pwd,
+                kind="password",
+                info="CVE-2018-14847 WinBox user.dat leak",
+            )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -175,6 +196,9 @@ class MikrotikWinboxCreds(Auxiliary):
         errors = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._check_host, h): h for h in targets}
@@ -189,6 +213,8 @@ class MikrotikWinboxCreds(Auxiliary):
                         hits.append(res)
                         for user, pwd in res.creds:
                             bar.log(colors.vuln(f"{res.host} — {user}:{pwd}"))
+                        if workspace_active:
+                            self._record_host_result(res)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -206,6 +232,13 @@ class MikrotikWinboxCreds(Auxiliary):
         print(f"  errors/skips: {colors.dimmed(str(errors))}")
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            total_creds = sum(len(h.creds) for h in hits)
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s), {total_creds} cred(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  credentials leaked:"))
             for h in hits:

@@ -9,7 +9,6 @@ from core.check import CheckResult
 from core.module import Option
 from core.progress import ProgressBar
 
-
 PATHS = [
     "/bower_components/angular-base64-upload/demo/index.html",
     "/node_modules/angular-base64-upload/demo/index.html",
@@ -22,14 +21,12 @@ SERVER_PATHS = [
     "/angular-base64-upload/demo/server.php",
 ]
 
-
 @dataclass
 class HostResult:
     host: str
     state: str = "unknown"
     detail: str = ""
     path: str = ""
-
 
 class AngularBase64UploadScanner(Auxiliary):
     NAME = "Angular-Base64-Upload RCE Scanner (CVE-2024-42640)"
@@ -98,6 +95,22 @@ class AngularBase64UploadScanner(Auxiliary):
                 return HostResult(host, "vulnerable", "demo exposed", prefix)
         return HostResult(host, "safe", "demo not found")
 
+    def _record_host_result(self, h):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="angular-base64-upload demo",
+        )
+        self.report_vuln(
+            name=self.NAME,
+            address=h.host,
+            severity="critical",
+            refs="CVE-2024-42640",
+            info=h.detail + " | prefix=" + h.path,
+        )
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -125,6 +138,9 @@ class AngularBase64UploadScanner(Auxiliary):
         unknown = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -138,6 +154,8 @@ class AngularBase64UploadScanner(Auxiliary):
                     if r.state == "vulnerable":
                         hits.append(r)
                         bar.log(colors.vuln(r.host + " - " + r.detail))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -158,6 +176,12 @@ class AngularBase64UploadScanner(Auxiliary):
         print("  unknown:      " + colors.warn(str(unknown)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} vuln(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:
