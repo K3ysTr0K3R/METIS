@@ -145,7 +145,7 @@ class Console:
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
         "K3ysTr0K3R                    v1.4.0\n"
         "\n"
-        "Modular Exploitation & Threat Intelligence System\n"
+        "Modular Exploitation & Threat Intelligence Framework\n"
     )
 
     def __init__(self):
