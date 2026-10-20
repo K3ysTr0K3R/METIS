@@ -3,10 +3,12 @@ from core import colors
 from core.rc import parse_source_file
 from core.targets import parse_targets
 
+
 def to_bool(v):
     if isinstance(v, bool):
         return v
     return str(v).lower() in ("1", "true", "yes", "on", "y")
+
 
 class Option:
     def __init__(self, name, default=None, required=False, description="", type=str):
@@ -14,7 +16,8 @@ class Option:
         self.default = default
         self.required = required
         self.description = description
-        self.type = type
+        self.type = to_bool if type is bool else type
+
 
 class Module:
     NAME = ""
