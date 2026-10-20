@@ -120,6 +120,16 @@ class MetisCompleter(Completer):
                     if h["address"].startswith(partial):
                         yield h["address"]
             return
+        if cmd == "db_import":
+            try:
+                for entry in sorted(os.listdir(c._local_cwd)):
+                    if not entry.lower().endswith(".xml"):
+                        continue
+                    if entry.startswith(partial):
+                        yield entry
+            except OSError:
+                pass
+            return
 
 
 class Console:
@@ -135,7 +145,7 @@ class Console:
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
         "K3ysTr0K3R                    v1.4.0\n"
         "\n"
-        "Modular Exploitation & Threat Intelligence Framework\n"
+        "Modular Exploitation & Threat Intelligence System\n"
     )
 
     def __init__(self):
@@ -570,6 +580,49 @@ class Console:
         """reap  — drop dead sessions"""
         self.sessions.reap()
 
+    def _table(self, headers, rows, indent=2, cellpad=2, show_header=True):
+        import re
+
+        headers = list(headers or [])
+        n = len(headers) if headers else max((len(r) for r in rows), default=0)
+        if n == 0:
+            return ""
+
+        norm = []
+        for r in rows:
+            row = ["" if c is None else str(c) for c in r]
+            while len(row) < n:
+                row.append("")
+            norm.append(row[:n])
+
+        widths = []
+        for i in range(n):
+            w = 0
+            if headers and i < len(headers):
+                w = len(colors.strip_ansi(headers[i]))
+            for row in norm:
+                w = max(w, len(colors.strip_ansi(row[i])))
+            widths.append(w)
+
+        pad = " " * cellpad
+        ind = " " * indent
+
+        def fmt(val, width):
+            visible = len(colors.strip_ansi(val))
+            if visible > width:
+                return val
+            return val + " " * (width - visible)
+
+        lines = []
+        if show_header and headers:
+            hdr = ind + pad.join(fmt(h, widths[i]) for i, h in enumerate(headers))
+            lines.append(colors.heading(hdr))
+            sep = ind + pad.join("-" * w for w in widths)
+            lines.append(colors.dimmed(sep))
+        for row in norm:
+            lines.append(ind + pad.join(fmt(row[i], widths[i]) for i in range(n)))
+        return "\n".join(lines)
+
     def do_workspace(self, args):
         """workspace [<name>|add <name>|del <name>|info|reset|clear]  — manage workspaces"""
         parts = args.strip().split(maxsplit=1)
@@ -586,7 +639,7 @@ class Console:
             print(colors.dimmed("  ----------"))
             for w in rows:
                 marker = colors.good("(current)") if w["name"] == current else ""
-                print(f"  {w['name'].ljust(20)} {marker}")
+                print(f"  {w['name'].ljust(24)} {marker}")
             return
 
         if sub == "clear":
@@ -678,21 +731,19 @@ class Console:
             if not rows:
                 print(colors.info("no hosts in workspace"))
                 return
-            print(colors.heading(
-                f"  {'Address'.ljust(20)} {'Name'.ljust(16)} "
-                f"{'OS'.ljust(14)} {'State'.ljust(8)} Last Seen"
-            ))
-            print(colors.dimmed(
-                f"  {'-'*20} {'-'*16} {'-'*14} {'-'*8} {'-'*16}"
-            ))
+            data = []
             for h in rows:
-                print(
-                    f"  {h['address'].ljust(20)} "
-                    f"{(h['name'] or '.').ljust(16)} "
-                    f"{(h['os'] or '.').ljust(14)} "
-                    f"{(h['state'] or '.').ljust(8)} "
-                    f"{self._fmt_ts(h['updated_at'])}"
-                )
+                data.append([
+                    h["address"],
+                    h["name"] or ".",
+                    h["os"] or ".",
+                    h["state"] or ".",
+                    self._fmt_ts(h["updated_at"]),
+                ])
+            print(self._table(
+                ["Address", "Name", "OS", "State", "Last Seen"],
+                data,
+            ))
             print(colors.dimmed(f"  ({len(rows)} host(s))"))
             return
 
@@ -736,8 +787,15 @@ class Console:
             if services:
                 print()
                 print(colors.heading("Services:"))
+                sdata = []
                 for s in services:
-                    print(f"  {s['port']}/{s['proto']}  {s['name']}  {s['banner']}")
+                    sdata.append([
+                        f"{s['port']}/{s['proto']}",
+                        s["name"] or ".",
+                        s["banner"] or "",
+                    ])
+                print(self._table([], sdata, indent=4, cellpad=2,
+                                  show_header=False))
             return
 
         print(colors.warn("usage: hosts [add|del|info] [args]"))
@@ -755,21 +813,19 @@ class Console:
             if not rows:
                 print(colors.info("no services in workspace"))
                 return
-            print(colors.heading(
-                f"  {'Host'.ljust(20)} {'Port'.ljust(6)} {'Proto'.ljust(6)} "
-                f"{'Name'.ljust(14)} Banner"
-            ))
-            print(colors.dimmed(
-                f"  {'-'*20} {'-'*6} {'-'*6} {'-'*14} {'-'*20}"
-            ))
+            data = []
             for s in rows:
-                print(
-                    f"  {s['address'].ljust(20)} "
-                    f"{str(s['port']).ljust(6)} "
-                    f"{s['proto'].ljust(6)} "
-                    f"{(s['name'] or '.').ljust(14)} "
-                    f"{s['banner']}"
-                )
+                data.append([
+                    s["address"],
+                    str(s["port"]),
+                    s["proto"],
+                    s["name"] or ".",
+                    s["banner"] or "",
+                ])
+            print(self._table(
+                ["Host", "Port", "Proto", "Name", "Banner"],
+                data,
+            ))
             print(colors.dimmed(f"  ({len(rows)} service(s))"))
             return
 
@@ -803,11 +859,19 @@ class Console:
         if not rows:
             print(colors.info(f"no services for {sub}"))
             return
+        data = []
         for s in rows:
-            print(
-                f"  {s['address']}:{s['port']}/{s['proto']}  "
-                f"{s['name']}  {s['banner']}"
-            )
+            data.append([
+                s["address"],
+                str(s["port"]),
+                s["proto"],
+                s["name"] or ".",
+                s["banner"] or "",
+            ])
+        print(self._table(
+            ["Host", "Port", "Proto", "Name", "Banner"],
+            data,
+        ))
 
     def do_vulns(self, args):
         """vulns [<host>|del <id>]  — list/delete recorded vulnerabilities"""
@@ -834,23 +898,21 @@ class Console:
         if not rows:
             print(colors.info("no vulns recorded"))
             return
-        print(colors.heading(
-            f"  {'ID'.ljust(4)} {'Host'.ljust(20)} {'Sev'.ljust(8)} "
-            f"{'Name'.ljust(28)} Module"
-        ))
-        print(colors.dimmed(
-            f"  {'-'*4} {'-'*20} {'-'*8} {'-'*28} {'-'*20}"
-        ))
+        data = []
         for v in rows:
             sev = v["severity"] or "unknown"
             sev_col = colors.bad(sev) if sev in ("high", "critical") else colors.warn(sev) if sev == "medium" else colors.dimmed(sev)
-            print(
-                f"  {str(v['id']).ljust(4)} "
-                f"{(v['address'] or '.').ljust(20)} "
-                f"{sev_col.ljust(8)} "
-                f"{v['name'].ljust(28)} "
-                f"{v['module']}"
-            )
+            data.append([
+                str(v["id"]),
+                v["address"] or ".",
+                sev_col,
+                v["name"],
+                v["module"],
+            ])
+        print(self._table(
+            ["ID", "Host", "Sev", "Name", "Module"],
+            data,
+        ))
         print(colors.dimmed(f"  ({len(rows)} vuln(s))"))
 
     def do_creds(self, args):
@@ -877,22 +939,22 @@ class Console:
         if not rows:
             print(colors.info("no creds recorded"))
             return
-        print(colors.heading(
-            f"  {'ID'.ljust(4)} {'Host'.ljust(20)} {'User'.ljust(20)} "
-            f"{'Kind'.ljust(10)} Secret"
-        ))
-        print(colors.dimmed(f"  {'-'*4} {'-'*20} {'-'*20} {'-'*10} {'-'*20}"))
+        data = []
         for c in rows:
             secret = c["secret"]
             if len(secret) > 20:
                 secret = secret[:17] + "..."
-            print(
-                f"  {str(c['id']).ljust(4)} "
-                f"{(c['address'] or '.').ljust(20)} "
-                f"{(c['username'] or '.').ljust(20)} "
-                f"{c['kind'].ljust(10)} "
-                f"{secret}"
-            )
+            data.append([
+                str(c["id"]),
+                c["address"] or ".",
+                c["username"] or ".",
+                c["kind"],
+                secret,
+            ])
+        print(self._table(
+            ["ID", "Host", "User", "Kind", "Secret"],
+            data,
+        ))
 
     def do_notes(self, args):
         """notes [add <data> | del <id>]  — list/add/delete notes"""
@@ -927,9 +989,14 @@ class Console:
         if not rows:
             print(colors.info("no notes"))
             return
+        data = []
         for n in rows:
-            print(f"  {colors.session(str(n['id']).rjust(4))}  "
-                  f"{self._fmt_ts(n['created_at'])}  {n['data']}")
+            data.append([
+                colors.session(str(n["id"]).rjust(4)),
+                self._fmt_ts(n["created_at"]),
+                n["data"],
+            ])
+        print(self._table([], data, indent=2, cellpad=2, show_header=False))
 
     def do_loot(self, args):
         """loot [del <id>]  — list/delete loot"""
@@ -955,19 +1022,19 @@ class Console:
         if not rows:
             print(colors.info("no loot"))
             return
-        print(colors.heading(
-            f"  {'ID'.ljust(4)} {'Host'.ljust(20)} {'Kind'.ljust(12)} "
-            f"{'Size'.ljust(8)} Path"
-        ))
-        print(colors.dimmed(f"  {'-'*4} {'-'*20} {'-'*12} {'-'*8} {'-'*20}"))
+        data = []
         for l in rows:
-            print(
-                f"  {str(l['id']).ljust(4)} "
-                f"{(l['address'] or '.').ljust(20)} "
-                f"{(l['kind'] or '.').ljust(12)} "
-                f"{str(l['size']).ljust(8)} "
-                f"{l['path']}"
-            )
+            data.append([
+                str(l["id"]),
+                l["address"] or ".",
+                l["kind"] or ".",
+                str(l["size"]),
+                l["path"] or "",
+            ])
+        print(self._table(
+            ["ID", "Host", "Kind", "Size", "Path"],
+            data,
+        ))
 
     def do_events(self, args):
         """events  — list recent workspace events"""
@@ -984,10 +1051,14 @@ class Console:
         if not rows:
             print(colors.info("no events"))
             return
+        data = []
         for e in rows:
-            ts = self._fmt_ts(e["created_at"])
-            host = e["address"] or "."
-            print(f"  {ts}  {host.ljust(20)}  {e['message']}")
+            data.append([
+                self._fmt_ts(e["created_at"]),
+                e["address"] or ".",
+                e["message"],
+            ])
+        print(self._table([], data, indent=2, cellpad=2, show_header=False))
 
     def do_db(self, args):
         """db [status|stats|reset]  — database operations"""
@@ -1029,8 +1100,24 @@ class Console:
 
         print(colors.warn("usage: db [status|stats|reset]"))
 
+    def _import_preview(self, parsed):
+        print()
+        print(colors.heading("  imported hosts:"))
+        data = []
+        for h in parsed["hosts"][:20]:
+            svc_count = len(h.get("services") or [])
+            data.append([
+                colors.good(h["address"]),
+                colors.dimmed(h.get("hostname") or "") if h.get("hostname") else "",
+                colors.session(h.get("os") or "") if h.get("os") else "",
+                colors.dimmed(f"({svc_count} service(s))") if svc_count else "",
+            ])
+        print(self._table([], data, indent=4, cellpad=2, show_header=False))
+        if len(parsed["hosts"]) > 20:
+            print(colors.dimmed(f"    ... {len(parsed['hosts']) - 20} more"))
+
     def do_db_nmap(self, args):
-        """db_nmap <nmap args>  — run nmap and import results into the active workspace"""
+        """db_nmap <nmap args>  — run nmap live and import results into the active workspace"""
         if not self.db.current_workspace_id():
             print(colors.warn("no active workspace — run 'workspace <name>' first"))
             return
@@ -1039,34 +1126,44 @@ class Console:
         if not nmap_args:
             print(colors.warn("usage: db_nmap <nmap args>"))
             print(colors.dimmed("  e.g. db_nmap -sV -O 192.168.1.0/24"))
-            print(colors.dimmed("  flags -oX / -oN are stripped automatically"))
+            print(colors.dimmed("  output flags (-oX, -oN, -oG, -oA) are stripped"))
             return
 
-        parts = [p for p in nmap_args.split()
-                 if not (p == "-oX" or p.startswith("-oX")
-                         or p == "-oN" or p.startswith("-oN"))]
-        cleaned = " ".join(parts)
-
-        from core.nmap_import import nmap_available, run_nmap, parse_nmap_xml, import_to_db
+        from core.nmap_import import (
+            nmap_available, strip_output_flags, run_nmap,
+            parse_nmap_xml, import_to_db,
+        )
 
         if not nmap_available():
             print(colors.bad("nmap not found on PATH"))
             return
 
+        cleaned = strip_output_flags(nmap_args)
         print(colors.info(f"db_nmap: nmap {cleaned}"))
-        print(colors.dimmed("  this may take a while depending on scan options"))
+        print(colors.dimmed("  nmap output will stream below; results import when it finishes"))
+        print()
 
         try:
             xml = run_nmap(cleaned, timeout=3600.0)
+        except KeyboardInterrupt:
+            print()
+            print(colors.warn("db_nmap: interrupted"))
+            return
         except Exception as e:
             print(colors.bad(f"nmap failed: {e}"))
             return
 
+        print()
         try:
             parsed = parse_nmap_xml(xml)
         except Exception as e:
             print(colors.bad(f"parse failed: {e}"))
             return
+
+        if parsed.get("repaired"):
+            print(colors.warn(
+                "nmap output was truncated — recovered host data from partial XML"
+            ))
 
         print(colors.info(
             f"  nmap completed: {len(parsed['hosts'])} host(s) up, "
@@ -1087,20 +1184,70 @@ class Console:
         ))
 
         if parsed["hosts"]:
-            print()
-            print(colors.heading("  imported hosts:"))
-            for h in parsed["hosts"][:20]:
-                line = "    " + colors.good(h["address"])
-                if h.get("hostname"):
-                    line += "  " + colors.dimmed(h["hostname"])
-                if h.get("os"):
-                    line += "  " + colors.session(h["os"])
-                svc_count = len(h.get("services") or [])
-                if svc_count:
-                    line += "  " + colors.dimmed(f"({svc_count} service(s))")
-                print(line)
-            if len(parsed["hosts"]) > 20:
-                print(colors.dimmed(f"    ... {len(parsed['hosts']) - 20} more"))
+            self._import_preview(parsed)
+
+    def do_db_import(self, args):
+        """db_import <file.xml>  — import nmap XML results into the active workspace"""
+        if not self.db.current_workspace_id():
+            print(colors.warn("no active workspace — run 'workspace <name>' first"))
+            return
+
+        path = args.strip()
+        if not path:
+            print(colors.warn("usage: db_import <file.xml>"))
+            print(colors.dimmed("  e.g. db_import scan.xml"))
+            return
+
+        path = os.path.expanduser(path)
+        if not os.path.isabs(path):
+            path = os.path.join(self._local_cwd, path)
+        path = os.path.normpath(path)
+
+        if not os.path.isfile(path):
+            print(colors.bad(f"file not found: {path}"))
+            return
+
+        from core.nmap_import import parse_nmap_xml, import_to_db
+
+        print(colors.info(f"db_import: parsing {path}"))
+        try:
+            with open(path, "r", errors="replace") as f:
+                xml = f.read()
+        except OSError as e:
+            print(colors.bad(f"could not read file: {e}"))
+            return
+
+        try:
+            parsed = parse_nmap_xml(xml)
+        except Exception as e:
+            print(colors.bad(f"parse failed: {e}"))
+            return
+
+        if parsed.get("repaired"):
+            print(colors.warn(
+                "file was truncated — recovered host data from partial XML"
+            ))
+
+        total_services = sum(len(h.get("services") or []) for h in parsed["hosts"])
+        print(colors.info(
+            f"  parsed: {len(parsed['hosts'])} host(s) up, {total_services} service(s)"
+        ))
+
+        try:
+            counts = import_to_db(self.db, parsed)
+        except Exception as e:
+            print(colors.bad(f"import failed: {e}"))
+            return
+
+        ws = self.db.current_workspace()
+        print(colors.good(
+            f"db_import: imported into workspace '{ws}': "
+            f"{counts['hosts']} host(s), {counts['services']} service(s), "
+            f"{counts['notes']} note(s)"
+        ))
+
+        if parsed["hosts"]:
+            self._import_preview(parsed)
 
     @staticmethod
     def _fmt_ts(ts):

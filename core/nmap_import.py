@@ -1,5 +1,7 @@
+import os
 import shutil
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 
 
@@ -11,43 +13,112 @@ class NmapParseError(RuntimeError):
     pass
 
 
+OUTPUT_FLAGS = ("-oX", "-oN", "-oG", "-oA", "-oS", "-oM")
+
+
 def nmap_available() -> bool:
     return shutil.which("nmap") is not None
 
 
-def run_nmap(args: str, timeout: float = 600.0) -> str:
+def strip_output_flags(args: str) -> str:
+    return " ".join(
+        a for a in args.split()
+        if not any(a == f or a.startswith(f) for f in OUTPUT_FLAGS)
+    )
+
+
+def _repair_truncated_xml(xml: str) -> str | None:
+    if "</nmaprun>" in xml:
+        return None
+
+    start = xml.find("<nmaprun")
+    if start == -1:
+        return None
+
+    opener_end = xml.find(">", start)
+    if opener_end == -1:
+        return None
+
+    last_host_end = xml.rfind("</host>")
+    if last_host_end == -1:
+        return None
+
+    body = xml[start:last_host_end + len("</host>")]
+    return body + "\n</nmaprun>"
+
+
+def run_nmap(args: str, timeout: float = 3600.0) -> str:
     if not nmap_available():
         raise NmapNotFound("nmap not found on PATH")
 
-    cmd = ["nmap", "-oX", "-"] + args.split()
+    cleaned = strip_output_flags(args)
+
+    fd, xml_path = tempfile.mkstemp(suffix=".xml", prefix="metis_nmap_")
+    os.close(fd)
+
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise NmapParseError(f"nmap timed out after {timeout}s")
+        cmd = ["nmap"] + cleaned.split() + ["-oX", xml_path]
+        proc = subprocess.Popen(cmd)
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+        except KeyboardInterrupt:
+            print()
+            print("[*] nmap: interrupt received, waiting for graceful shutdown...")
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
-    if not result.stdout:
-        err = (result.stderr or "").strip()
-        raise NmapParseError(f"nmap produced no XML output ({err[:200]})")
+        if not os.path.isfile(xml_path):
+            raise NmapParseError("nmap produced no XML output")
 
-    return result.stdout
+        try:
+            with open(xml_path, "r", errors="replace") as f:
+                xml = f.read()
+        except OSError as e:
+            raise NmapParseError(f"could not read nmap XML: {e}")
+
+        if not xml.strip():
+            raise NmapParseError("nmap XML output was empty")
+
+        return xml
+    finally:
+        try:
+            os.unlink(xml_path)
+        except OSError:
+            pass
 
 
 def parse_nmap_xml(xml_text: str) -> dict:
+    repaired = False
+
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as e:
-        raise NmapParseError(f"invalid nmap XML: {e}")
+        fixed = _repair_truncated_xml(xml_text)
+        if not fixed:
+            raise NmapParseError(f"invalid nmap XML: {e}")
+        try:
+            root = ET.fromstring(fixed)
+            repaired = True
+        except ET.ParseError:
+            raise NmapParseError(
+                f"invalid nmap XML: {e} (file appears truncated and could not be repaired)"
+            )
 
     if root.tag != "nmaprun":
         raise NmapParseError(f"unexpected root tag: {root.tag}")
 
     command = root.get("args", "")
-    out = {"hosts": [], "runstats": {}, "command": command}
+    out = {"hosts": [], "runstats": {}, "command": command, "repaired": repaired}
 
     for host_el in root.findall("host"):
         status_el = host_el.find("status")
@@ -55,11 +126,9 @@ def parse_nmap_xml(xml_text: str) -> dict:
             continue
 
         address = ""
-        addr_type = "ipv4"
         for addr_el in host_el.findall("address"):
             if addr_el.get("addrtype") in ("ipv4", "ipv6"):
                 address = addr_el.get("addr", "")
-                addr_type = addr_el.get("addrtype", "ipv4")
                 break
         if not address:
             continue
@@ -261,10 +330,11 @@ def import_to_db(db, parsed: dict) -> dict:
 
     cmd = parsed.get("command", "")
     elapsed = parsed.get("runstats", {}).get("elapsed", 0)
+    repaired_note = " (partial)" if parsed.get("repaired") else ""
     try:
         db.log_event(
-            f"db_nmap: {len(parsed['hosts'])} host(s), "
-            f"{counts['services']} service(s), {elapsed:.1f}s | {cmd[:120]}",
+            f"nmap: {len(parsed['hosts'])} host(s), "
+            f"{counts['services']} service(s), {elapsed:.1f}s{repaired_note} | {cmd[:120]}",
             kind="nmap",
         )
         counts["events"] += 1
