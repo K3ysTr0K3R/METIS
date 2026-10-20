@@ -1,9 +1,7 @@
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-
 import requests
-
 from core import colors
 from core.auxiliary import Auxiliary
 from core.check import CheckResult
@@ -117,6 +115,20 @@ class DirectoryListingScanner(Auxiliary):
 
         return res
 
+    def _record_host_result(self, res):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(res.host, state="up")
+        self.report_service(
+            res.host, res.port,
+            proto="tcp", state="open",
+            name=svc_name, banner="",
+        )
+        self.note(
+            "dir_listing=" + (res.url or "") + " path=" + (res.matched_path or ""),
+            address=res.host,
+            kind="dir_listing",
+        )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -142,6 +154,9 @@ class DirectoryListingScanner(Auxiliary):
         bar = ProgressBar(total=len(targets), prefix="scan")
         hits, errors, aborted = [], 0, False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -155,6 +170,8 @@ class DirectoryListingScanner(Auxiliary):
                     if res.vulnerable:
                         hits.append(res)
                         bar.log(colors.vuln(f"{res.host}:{res.port} -> {res.url}"))
+                        if workspace_active:
+                            self._record_host_result(res)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -172,6 +189,12 @@ class DirectoryListingScanner(Auxiliary):
         print(f"  errors/skips: {colors.dimmed(str(errors))}")
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  vulnerable hosts:"))
             for h in hits:

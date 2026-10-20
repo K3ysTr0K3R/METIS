@@ -106,6 +106,21 @@ class WebDAVScanner(Auxiliary):
         result.dangerous = sorted(set(result.methods) & DANGEROUS_METHODS)
         return result
 
+    def _record_host_result(self, res):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(res.host, state="up")
+        self.report_service(
+            res.host, self.options["RPORT"],
+            proto="tcp", state="open",
+            name=svc_name, banner="WebDAV",
+        )
+        bits = ["webdav_enabled", "url=" + res.url]
+        if res.methods:
+            bits.append("allow=" + ",".join(res.methods))
+        if res.dangerous:
+            bits.append("dangerous=" + ",".join(res.dangerous))
+        self.note(" ".join(bits), address=res.host, kind="webdav_info")
+
     def check(self):
         targets = self._expand_targets()
         host = targets[0]
@@ -134,6 +149,9 @@ class WebDAVScanner(Auxiliary):
         errors = 0
         aborted = False
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -151,6 +169,8 @@ class WebDAVScanner(Auxiliary):
                         if r.dangerous:
                             line += "  [dangerous: " + ", ".join(r.dangerous) + "]"
                         bar.log(colors.vuln(line))
+                        if workspace_active:
+                            self._record_host_result(r)
                         if stop_first:
                             aborted = True
                             for f in futures:
@@ -168,6 +188,12 @@ class WebDAVScanner(Auxiliary):
         print("  errors/skips: " + colors.dimmed(str(errors)))
         if aborted:
             print(colors.warn("  scan aborted early (STOP_ON_FIRST)"))
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:     " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{len(hits)} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  webdav-enabled hosts:"))
             for h in hits:

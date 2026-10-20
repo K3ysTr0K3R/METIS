@@ -184,7 +184,7 @@ class RTSPScanner(Auxiliary):
         token = base64.b64encode(f"{user}:{pw}".encode()).decode()
         return f"Basic {token}"
 
-    def _check_path(self, host: str, path: str, creds: list[tuple[str, str]]) -> tuple[PathHit | None, bool]:
+    def _check_path(self, host: str, path: str, creds: list[tuple[str, str]]):
         resp = self._transact(host, "DESCRIBE", path)
         if resp is None:
             return None, False
@@ -264,6 +264,30 @@ class RTSPScanner(Auxiliary):
             label += f" (cracked: {hit.auth_bypassed_with})"
         return label
 
+    def _record_host_result(self, h):
+        self.report_host(h.host, state="up")
+        self.report_service(
+            h.host, h.port,
+            proto="tcp", state="open",
+            name="rtsp", banner=(h.banner or "")[:200],
+        )
+        for hit in h.hits:
+            note = "rtsp_stream=" + self._rtsp_url(h.host, hit.path)
+            if hit.sdp_title:
+                note += ' "' + hit.sdp_title + '"'
+            if hit.content_type:
+                note += " ctype=" + hit.content_type
+            if hit.auth_bypassed_with:
+                note += " auth=" + hit.auth_bypassed_with
+            self.note(note, address=h.host, kind="rtsp_stream")
+            if hit.auth_bypassed_with:
+                user, _, pw = hit.auth_bypassed_with.partition(":")
+                self.report_cred(
+                    h.host, user, pw,
+                    kind="password",
+                    info="RTSP Basic auth on " + self._rtsp_url(h.host, hit.path),
+                )
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -306,6 +330,9 @@ class RTSPScanner(Auxiliary):
         bar = ProgressBar(total=len(targets), prefix="scan")
         hits, protected, errors = [], 0, 0
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -323,6 +350,8 @@ class RTSPScanner(Auxiliary):
                         hits.append(res)
                         for hit in res.hits:
                             bar.log(colors.vuln(f"{res.host}: {self._format_hit(res.host, hit)}"))
+                        if workspace_active:
+                            self._record_host_result(res)
                     elif res.auth_only_paths:
                         protected += 1
         finally:
@@ -336,6 +365,12 @@ class RTSPScanner(Auxiliary):
         print(f"  streams found:    {colors.green(str(total_hits))}")
         print(f"  auth-only hosts:  {colors.dimmed(str(protected))}")
         print(f"  errors/no-rtsp:   {colors.dimmed(str(errors))}")
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:         " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{total_hits} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  open streams:"))
             for h in hits:

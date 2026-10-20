@@ -1,9 +1,7 @@
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-
 import requests
-
 from core import colors
 from core.auxiliary import Auxiliary
 from core.check import CheckResult
@@ -174,6 +172,20 @@ class AdminPanelFinder(Auxiliary):
         res.hits.sort(key=lambda h: h.path)
         return res
 
+    def _record_host_result(self, res):
+        svc_name = "https" if self.options["SSL"] else "http"
+        self.report_host(res.host, state="up")
+        self.report_service(
+            res.host, res.port,
+            proto="tcp", state="open",
+            name=svc_name, banner="",
+        )
+        for hit in res.hits:
+            note = "panel=" + hit.url + " [" + str(hit.status_code) + "]"
+            if hit.title:
+                note += ' "' + hit.title + '"'
+            self.note(note, address=res.host, kind="admin_panel")
+
     def check(self):
         targets = self._expand_targets()
         if len(targets) > 1:
@@ -202,6 +214,9 @@ class AdminPanelFinder(Auxiliary):
         bar = ProgressBar(total=len(targets), prefix="scan")
         hits, errors = [], 0
 
+        db = self._db()
+        workspace_active = bool(db and db.current_workspace_id())
+
         try:
             with ThreadPoolExecutor(max_workers=threads) as ex:
                 futures = {ex.submit(self._probe, h): h for h in targets}
@@ -219,6 +234,8 @@ class AdminPanelFinder(Auxiliary):
                                 f"{res.host}:{res.port} -> {hit.url} [{hit.status_code}]"
                                 + (f' "{hit.title}"' if hit.title else "")
                             ))
+                        if workspace_active:
+                            self._record_host_result(res)
                     elif res.error:
                         errors += 1
         finally:
@@ -231,6 +248,12 @@ class AdminPanelFinder(Auxiliary):
         print(f"  hosts w/ panel: {colors.green(str(len(hits)))}")
         print(f"  panels found:   {colors.green(str(total_hits))}")
         print(f"  errors/skips:   {colors.dimmed(str(errors))}")
+        if workspace_active and hits:
+            ws = db.current_workspace()
+            print("  recorded:       " + colors.dimmed(
+                f"{len(hits)} host(s), {len(hits)} service(s), "
+                f"{total_hits} note(s) in workspace '{ws}'"
+            ))
         if hits:
             print(colors.heading("  found panels:"))
             for h in hits:
