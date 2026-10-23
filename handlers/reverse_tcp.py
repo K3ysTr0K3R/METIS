@@ -11,14 +11,32 @@ class ReverseTCPHandler(threading.Thread):
         self.lport = lport
         self.sessions = session_manager
         self._stop = threading.Event()
+        self._srv = None
 
     def run(self):
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind((self.lhost, self.lport))
-        srv.listen(5)
+
+        try:
+            srv.bind((self.lhost, self.lport))
+        except OSError as e:
+            print(colors.bad(
+                f"handler bind {self.lhost}:{self.lport} failed: {e}"
+            ))
+            srv.close()
+            return
+
+        try:
+            srv.listen(5)
+        except OSError as e:
+            print(colors.bad(f"handler listen failed: {e}"))
+            srv.close()
+            return
+
         srv.settimeout(1.0)
+        self._srv = srv
         print(colors.info(f"handler listening on {self.lhost}:{self.lport}"))
+
         while not self._stop.is_set():
             try:
                 conn, addr = srv.accept()
@@ -26,10 +44,29 @@ class ReverseTCPHandler(threading.Thread):
                 continue
             except OSError:
                 break
-            session = Session(conn, addr)
-            self.sessions.add(session)
-        srv.close()
+
+            try:
+                session = Session(conn, addr)
+                self.sessions.add(session)
+            except Exception as e:
+                print(colors.bad(f"handler: session setup failed: {e}"))
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+        try:
+            srv.close()
+        except OSError:
+            pass
+        self._srv = None
         print(colors.info("handler stopped"))
 
     def stop(self):
         self._stop.set()
+        srv = self._srv
+        if srv is not None:
+            try:
+                srv.close()
+            except OSError:
+                pass

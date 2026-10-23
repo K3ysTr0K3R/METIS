@@ -49,7 +49,6 @@ class ModuleManager:
         return cls()
 
     def metadata(self, path: str) -> dict:
-        """Return display metadata for one module."""
         cls = self.modules[path]
 
         check_fn = getattr(cls, "check", None)
@@ -64,13 +63,12 @@ class ModuleManager:
             "description": getattr(cls, "DESCRIPTION", "") or "",
             "rank": getattr(cls, "RANK", DEFAULT_RANK).lower(),
             "disclosed": getattr(cls, "DISCLOSED", "") or "",
-            "check": bool(getattr(cls, "CHECK", check_supported)),
+            "check": check_supported,
             "author": getattr(cls, "AUTHOR", "") or "",
             "references": getattr(cls, "REFERENCES", []) or [],
         }
 
     def search(self, term: str):
-        """Simple search — returns list of paths (back-compat)."""
         term = term.lower()
         return [m for m in self.list() if term in m.lower()]
 

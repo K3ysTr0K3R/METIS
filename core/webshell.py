@@ -7,19 +7,14 @@ class WebShellSession(Session):
                  session: requests.Session | None = None,
                  timeout: float = 10.0):
 
-        import uuid
-        import time
-        self.id = uuid.uuid4().hex[:8]
+        host = self._host(url)
+        super().__init__(sock=None, addr=(host, 80))
         self.url = url
         self.method = method.lower()
         self.cmd_param = cmd_param
         self.http = session or requests.Session()
         self.http.verify = False
         self._timeout = timeout
-        self.addr = (self._host(url), 80)
-        self.created_at = time.time()
-        self.alive = True
-        self.lock = __import__("threading").Lock()
 
     @staticmethod
     def _host(url: str) -> str:

@@ -1,15 +1,18 @@
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
 from core import colors
+
+class _PayloadServer(HTTPServer):
+    def __init__(self, addr, handler, payload_map):
+        super().__init__(addr, handler)
+        self.payload_map = payload_map
 
 
 class _PayloadHandler(BaseHTTPRequestHandler):
     server_version = "demo/0.4"
-    payload_map: dict[str, tuple[bytes, str]] = {}
 
     def do_GET(self):
-        entry = self.payload_map.get(self.path)
+        entry = self.server.payload_map.get(self.path)
         if not entry:
             self.send_response(404)
             self.end_headers()
@@ -27,23 +30,25 @@ class _PayloadHandler(BaseHTTPRequestHandler):
 
 
 class ThreadedHTTPPayloadServer:
-    """Serve one or more files at specific paths. Start/stop is idempotent."""
-
     def __init__(self, host: str, port: int):
         self.host = host
         self.port = port
         self.httpd: HTTPServer | None = None
         self.thread: threading.Thread | None = None
+        self.payload_map: dict[str, tuple[bytes, str]] = {}
 
-    def register(self, path: str, content: bytes | str, content_type: str = "application/xml"):
+    def register(self, path: str, content: bytes | str,
+                 content_type: str = "application/xml"):
         if isinstance(content, str):
             content = content.encode()
-        _PayloadHandler.payload_map[path] = (content, content_type)
+        self.payload_map[path] = (content, content_type)
 
     def start(self):
         if self.httpd:
             return self
-        self.httpd = HTTPServer((self.host, self.port), _PayloadHandler)
+        self.httpd = _PayloadServer(
+            (self.host, self.port), _PayloadHandler, self.payload_map
+        )
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
         print(colors.info(f"payload server up on {self.host}:{self.port}"))

@@ -27,6 +27,12 @@ GRADIENT_PRESETS = {
     "ember":     [88, 124, 160, 196, 202, 208],
 }
 
+_SYNC_NOISE = (
+    "cannot set terminal process group",
+    "no job control in this shell",
+    "no job control",
+)
+
 
 class MetisCompleter(Completer):
     def __init__(self, console):
@@ -470,7 +476,8 @@ class Console:
             print(colors.info("no active handlers"))
             return
         for i, h in enumerate(self.handlers):
-            print(f"  [{i}] {h.lhost}:{h.lport}")
+            state = "alive" if h.is_alive() else "dead"
+            print(f"  [{i}] {h.lhost}:{h.lport}  ({state})")
 
     def do_kill_handler(self, args):
         """kill_handler <index>  — stop a handler by index"""
@@ -481,7 +488,11 @@ class Console:
             print(colors.warn("usage: kill_handler <index>"))
             return
         h.stop()
-        print(colors.info(f"handler {idx} stopped"))
+        h.join(timeout=2)
+        if h.is_alive():
+            print(colors.warn(f"handler {idx} did not stop cleanly"))
+        else:
+            print(colors.info(f"handler {idx} stopped"))
 
     def do_sessions(self, _):
         """sessions  — list active sessions"""
@@ -507,7 +518,12 @@ class Console:
         if got:
             try:
                 text = got.decode(errors="replace")
-                print(colors.dimmed(text.rstrip()))
+                text = "\n".join(
+                    ln for ln in text.splitlines()
+                    if not any(noise in ln for noise in self._SYNC_NOISE)
+                )
+                if text.strip():
+                    print(colors.dimmed(text.rstrip()))
             except Exception:
                 pass
         return got
