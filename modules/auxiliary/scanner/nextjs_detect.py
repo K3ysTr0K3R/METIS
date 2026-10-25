@@ -27,6 +27,7 @@ class NextjsDetect(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "info"
     CHECK = True
     REFERENCES = [
         "https://nextjs.org/docs",

@@ -29,6 +29,7 @@ class React2ShellScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2025-12-03"
     CHECK = True
     REFERENCES = [

@@ -52,6 +52,7 @@ class ConductorInlineRCEScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2026-07-10"
     CHECK = True
     REFERENCES = [

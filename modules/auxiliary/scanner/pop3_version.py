@@ -53,6 +53,7 @@ class POP3VersionScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "info"
     CHECK = True
     REFERENCES = [
         "https://www.ietf.org/rfc/rfc1939.txt",

@@ -35,6 +35,7 @@ class MS17_010Scanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "critical"
     CHECK = True
     REFERENCES = [
         "https://technet.microsoft.com/en-us/library/security/ms17-010.aspx",

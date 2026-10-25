@@ -34,6 +34,7 @@ class RedisCve20220543Scanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2022-02-18"
     CHECK = True
     REFERENCES = [

@@ -28,6 +28,7 @@ class MySQLVersionScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "info"
     CHECK = True
     REFERENCES = [
         "https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_handshake_v10.html",

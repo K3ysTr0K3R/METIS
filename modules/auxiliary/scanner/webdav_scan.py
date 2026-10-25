@@ -35,6 +35,7 @@ class WebDAVScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "info"
     CHECK = True
     REFERENCES = [
         "https://datatracker.ietf.org/doc/html/rfc4918",

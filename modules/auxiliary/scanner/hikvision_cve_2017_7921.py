@@ -30,6 +30,7 @@ class HikvisionAuthBypass(Auxiliary):
 
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "critical"
     DISCLOSED = "2017-09-23"
     CHECK = True
     REFERENCES = [

@@ -53,6 +53,7 @@ class MikrotikWinboxCreds(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "great"
+    SEVERITY = "critical"
     DISCLOSED = "2018-08-01"
     CHECK = True
     REFERENCES = [

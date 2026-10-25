@@ -34,6 +34,7 @@ class HikvisionRTSPDetector(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "critical"
     DISCLOSED = "2014-11-19"
     CHECK = True
     REFERENCES = [

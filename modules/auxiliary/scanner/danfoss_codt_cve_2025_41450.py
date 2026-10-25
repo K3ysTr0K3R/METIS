@@ -45,6 +45,7 @@ class DanfossCodtScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2025-05-20"
     CHECK = True
     REFERENCES = [

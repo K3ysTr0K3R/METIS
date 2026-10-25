@@ -48,6 +48,7 @@ class LangflowPathTraversalScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2026-03-27"
     CHECK = True
     REFERENCES = [

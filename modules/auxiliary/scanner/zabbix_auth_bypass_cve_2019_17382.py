@@ -30,6 +30,7 @@ class ZabbixAuthBypassScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "high"
     DISCLOSED = "2019-10-08"
     CHECK = True
     REFERENCES = [

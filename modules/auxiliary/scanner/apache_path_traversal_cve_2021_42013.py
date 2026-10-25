@@ -38,6 +38,7 @@ class ApachePathTraversalCVE202142013(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2021-10-04"
     CHECK = True
     REFERENCES = [

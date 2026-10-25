@@ -55,6 +55,7 @@ class DiviFormBuilderUploadScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2026-04-16"
     CHECK = True
     REFERENCES = [

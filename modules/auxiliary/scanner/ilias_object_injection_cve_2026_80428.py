@@ -78,6 +78,7 @@ class IliasObjectInjectionScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "great"
+    SEVERITY = "critical"
     DISCLOSED = "2026-08-31"
     CHECK = True
     REFERENCES = [

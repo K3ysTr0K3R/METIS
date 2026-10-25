@@ -56,6 +56,7 @@ class AdminPanelFinder(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "info"
     CHECK = True
 
     OPTIONS = [

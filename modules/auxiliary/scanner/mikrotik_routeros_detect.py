@@ -44,6 +44,7 @@ class MikroTikRouterOSHTTPDetect(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "normal"
+    SEVERITY = "info"
     DISCLOSED = "2026-10-17"
     CHECK = True
     REFERENCES = [

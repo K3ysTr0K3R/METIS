@@ -39,6 +39,7 @@ class AngularBase64UploadScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "great"
+    SEVERITY = "critical"
     DISCLOSED = "2024-10-10"
     CHECK = True
     REFERENCES = [

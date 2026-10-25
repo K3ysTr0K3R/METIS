@@ -34,6 +34,7 @@ class FortiosPathTraversalScanner(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "great"
+    SEVERITY = "high"
     DISCLOSED = "2018-06-03"
     CHECK = True
     REFERENCES = [

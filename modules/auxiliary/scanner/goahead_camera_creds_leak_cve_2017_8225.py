@@ -35,6 +35,7 @@ class GoAheadCredLeak(Auxiliary):
     )
     AUTHOR = "K3ysTr0K3R"
     RANK = "excellent"
+    SEVERITY = "critical"
     DISCLOSED = "2017-08-01"
     CHECK = True
     REFERENCES = [
