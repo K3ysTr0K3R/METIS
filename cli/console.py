@@ -576,7 +576,8 @@ class Console:
                 continue
             out = s.shell(cmd)
             if not s.alive:
-                print(colors.warn("session died during command"))
+                if out:
+                    print(colors.warn("session died during command"))
                 break
             if out:
                 print(out, end="" if out.endswith("\n") else "\n")
@@ -1685,20 +1686,21 @@ class Console:
         if self.db and self.db.current_workspace_id() and result == CheckResult.VULNERABLE:
             targets = self.active_module.resolve_targets()
             name = self.active_module.NAME or self.active_path
+            severity = getattr(self.active_module, "SEVERITY", "unknown") or "unknown"
             for t in targets:
                 self.db.ensure_host(t, state="up")
                 self.db.add_vuln(
                     name=name,
                     module=self.active_path,
                     host_address=t,
-                    severity="unknown",
+                    severity=severity,
                     info="check() returned vulnerable",
                 )
             if not targets:
                 self.db.add_vuln(
                     name=name,
                     module=self.active_path,
-                    severity="unknown",
+                    severity=severity,
                     info="check() returned vulnerable (no target recorded)",
                 )
             print(colors.dimmed(
