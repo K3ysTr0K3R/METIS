@@ -66,18 +66,15 @@ class FortiosPathTraversalScanner(Auxiliary):
 
     def _request(self, host, path):
         url = self._base_url(host) + path
-        ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url)
-        req.add_header("User-Agent", "Mozilla/5.0 (metis)")
-        req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        try:
-            with urllib.request.urlopen(req, timeout=self.options["TIMEOUT"], context=ctx) as r:
-                return r.status, r.read()
-        except urllib.error.HTTPError as e:
-            return e.code, e.read()
-        except urllib.error.URLError:
-            raise
-
+        headers = {
+            "User-Agent": "Mozilla/5.0 (metis)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        status, _hdrs, raw = self.http_request(
+            "GET", url, headers, None,
+            timeout=self.options["TIMEOUT"],
+        )
+        return status, raw
     def _extract_usernames(self, body):
         usernames = []
         try:

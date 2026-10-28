@@ -54,6 +54,13 @@ class Module:
             self.options["RHOSTS"] = None
         self.framework = None
 
+        if "HTTPTRACE" not in self.options:
+            self._opts_meta["HTTPTRACE"] = Option(
+                "HTTPTRACE", default=False, type=to_bool,
+                description="print HTTP request/response for debugging",
+            )
+            self.options["HTTPTRACE"] = False
+
     def set_option(self, name, value):
         if name not in self.options:
             raise KeyError(f"unknown option: {name}")
@@ -185,3 +192,77 @@ class Module:
             return db.add_note(data, host_address=address, kind=kind)
         except Exception:
             return None
+
+    def _http_trace_enabled(self):
+        return bool(self.options.get("HTTPTRACE"))
+
+    def _http_trace_request(self, method, url, headers=None, body=None):
+        if not self._http_trace_enabled():
+            return
+        print(colors.warn(f"[httptrace] >>> {method} {url}"))
+        for k, v in (headers or {}).items():
+            shown = v
+            if k.lower() in ("authorization", "x-api-key", "cookie"):
+                shown = v[:20] + "..." if len(v) > 20 else "<redacted>"
+            print(colors.dimmed(f"[httptrace]   {k}: {shown}"))
+        if body:
+            try:
+                if isinstance(body, bytes):
+                    preview = body[:512].decode("latin-1", errors="replace")
+                else:
+                    preview = str(body)[:512]
+                preview = preview.replace("\r\n", "\\r\\n").replace("\n", "\\n")
+                print(colors.dimmed(f"[httptrace]   body: {preview}"))
+            except Exception:
+                print(colors.dimmed(f"[httptrace]   body: <{len(body)} bytes>"))
+
+    def _http_trace_response(self, status, headers=None, body=None):
+        if not self._http_trace_enabled():
+            return
+        print(colors.warn(f"[httptrace] <<< {status}"))
+        for k, v in (headers or {}).items():
+            shown = v
+            if k.lower() in ("set-cookie", "x-auth-token"):
+                shown = v[:40] + "..." if len(v) > 40 else v
+            print(colors.dimmed(f"[httptrace]   {k}: {shown}"))
+        if body:
+            try:
+                if isinstance(body, bytes):
+                    preview = body[:512].decode("latin-1", errors="replace")
+                else:
+                    preview = str(body)[:512]
+                preview = preview.replace("\r\n", "\\r\\n").replace("\n", "\\n")
+                print(colors.dimmed(f"[httptrace]   body: {preview}"))
+            except Exception:
+                print(colors.dimmed(f"[httptrace]   body: <{len(body)} bytes>"))
+
+    def http_request(self, method, url, headers=None, body=None, timeout=None):
+        import urllib.request
+        import urllib.error
+        import ssl
+
+        self._http_trace_request(method, url, headers, body)
+
+        req = urllib.request.Request(url, data=body, method=method)
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
+
+        ctx = ssl._create_unverified_context()
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                status = r.status
+                resp_headers = dict(r.headers)
+                resp_body = r.read()
+        except urllib.error.HTTPError as e:
+            status = e.code
+            resp_headers = dict(e.headers) if e.headers else {}
+            try:
+                resp_body = e.read()
+            except Exception:
+                resp_body = b""
+        except urllib.error.URLError as e:
+            self._http_trace_response(0, {}, f"URLError: {e}".encode())
+            raise
+
+        self._http_trace_response(status, resp_headers, resp_body)
+        return status, resp_headers, resp_body
