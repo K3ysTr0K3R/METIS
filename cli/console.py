@@ -27,12 +27,6 @@ GRADIENT_PRESETS = {
     "ember":     [88, 124, 160, 196, 202, 208],
 }
 
-_SYNC_NOISE = (
-    "cannot set terminal process group",
-    "no job control in this shell",
-    "no job control",
-)
-
 
 class MetisCompleter(Completer):
     def __init__(self, console):
@@ -476,8 +470,7 @@ class Console:
             print(colors.info("no active handlers"))
             return
         for i, h in enumerate(self.handlers):
-            state = "alive" if h.is_alive() else "dead"
-            print(f"  [{i}] {h.lhost}:{h.lport}  ({state})")
+            print(f"  [{i}] {h.lhost}:{h.lport}")
 
     def do_kill_handler(self, args):
         """kill_handler <index>  — stop a handler by index"""
@@ -488,11 +481,7 @@ class Console:
             print(colors.warn("usage: kill_handler <index>"))
             return
         h.stop()
-        h.join(timeout=2)
-        if h.is_alive():
-            print(colors.warn(f"handler {idx} did not stop cleanly"))
-        else:
-            print(colors.info(f"handler {idx} stopped"))
+        print(colors.info(f"handler {idx} stopped"))
 
     def do_sessions(self, _):
         """sessions  — list active sessions"""
@@ -518,15 +507,27 @@ class Console:
         if got:
             try:
                 text = got.decode(errors="replace")
-                text = "\n".join(
-                    ln for ln in text.splitlines()
-                    if not any(noise in ln for noise in self._SYNC_NOISE)
-                )
-                if text.strip():
-                    print(colors.dimmed(text.rstrip()))
+                print(colors.dimmed(text.rstrip()))
             except Exception:
                 pass
         return got
+
+    @staticmethod
+    def _clean_shell_output(out: str) -> str:
+        if not out:
+            return ""
+        import re
+        text = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", out)
+        text = re.sub(r"\x1b\][^\x07]*\x07", "", text)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        lines = text.split("\n")
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if not lines:
+            return ""
+        return "\n".join(lines) + "\n"
 
     def do_interact(self, args):
         """interact <sid>  — drop into a shell on a session"""
@@ -545,7 +546,7 @@ class Console:
         self._sync_session(s, timeout=4.0)
 
         for init_cmd in (
-            "stty -echo 2>/dev/null",
+            "stty -echo -onlcr 2>/dev/null",
             "PS1='' PS2=''",
             "set +m 2>/dev/null",
         ):
@@ -576,11 +577,11 @@ class Console:
                 continue
             out = s.shell(cmd)
             if not s.alive:
-                if out:
-                    print(colors.warn("session died during command"))
+                print(colors.warn("session died during command"))
                 break
-            if out:
-                print(out, end="" if out.endswith("\n") else "\n")
+            cleaned = self._clean_shell_output(out)
+            if cleaned:
+                print(cleaned, end="")
 
     def do_kill(self, args):
         """kill <sid>  — close a session"""
@@ -1686,21 +1687,20 @@ class Console:
         if self.db and self.db.current_workspace_id() and result == CheckResult.VULNERABLE:
             targets = self.active_module.resolve_targets()
             name = self.active_module.NAME or self.active_path
-            severity = getattr(self.active_module, "SEVERITY", "unknown") or "unknown"
             for t in targets:
                 self.db.ensure_host(t, state="up")
                 self.db.add_vuln(
                     name=name,
                     module=self.active_path,
                     host_address=t,
-                    severity=severity,
+                    severity="unknown",
                     info="check() returned vulnerable",
                 )
             if not targets:
                 self.db.add_vuln(
                     name=name,
                     module=self.active_path,
-                    severity=severity,
+                    severity="unknown",
                     info="check() returned vulnerable (no target recorded)",
                 )
             print(colors.dimmed(

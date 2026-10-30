@@ -60,9 +60,8 @@ class ReverseTCPHandler(threading.Thread):
         except OSError:
             pass
         self._srv = None
-        print(colors.info("handler stopped"))
 
-    def stop(self):
+    def stop(self, quiet: bool = False):
         self._stop.set()
         srv = self._srv
         if srv is not None:
