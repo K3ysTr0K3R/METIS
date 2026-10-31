@@ -3,3 +3,9 @@ __pycache__/
 *.py.bak
 domains.txt
 passwords.txt
+__pycache__/
+*.pyc
+*.log
+nohup.out
+domains.txt
+passwords.txt

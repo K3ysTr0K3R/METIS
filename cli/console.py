@@ -134,7 +134,7 @@ class MetisCompleter(Completer):
 
 class Console:
     BASE_PROMPT = "metis"
-    VERSION = "1.4.0"
+    VERSION = "2.0.0"
     REPO = "K3ysTr0K3R/METIS"
     BANNER = (
         "███╗   ███╗███████╗████████╗██╗███████╗\n"
@@ -143,7 +143,7 @@ class Console:
         "██║╚██╔╝██║██╔══╝     ██║   ██║╚════██║\n"
         "██║ ╚═╝ ██║███████╗   ██║   ██║███████║\n"
         "╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝╚══════╝\n"
-        "K3ysTr0K3R                    v1.4.0\n"
+        "K3ysTr0K3R                    v2.0.0\n"
         "\n"
         "Modular Exploitation & Threat Intelligence Framework\n"
     )
@@ -443,6 +443,43 @@ class Console:
         h.start()
         self.handlers.append(h)
 
+    def do_agent_listen(self, args):
+        """agent_listen <lhost> <lport>  — start a Metis agent listener"""
+        from handlers.metis_agent import MetisAgentHandler
+        parts = shlex.split(args)
+        if len(parts) != 2:
+            print(colors.warn("usage: agent_listen <lhost> <lport>"))
+            return
+        try:
+            lhost, lport = parts[0], int(parts[1])
+        except ValueError:
+            print(colors.bad("lport must be an integer"))
+            return
+        h = MetisAgentHandler(lhost, lport, self.sessions)
+        h.start()
+        self.handlers.append(h)
+
+    def do_agent_gen(self, args):
+        """agent_gen <lhost> <lport> [python|python3]  — print stager command"""
+        from core.agent_payload import build_stager
+        parts = shlex.split(args)
+        if len(parts) < 2:
+            print(colors.warn("usage: agent_gen <lhost> <lport> [python|python3]"))
+            return
+        try:
+            lhost, lport = parts[0], int(parts[1])
+        except ValueError:
+            print(colors.bad("lport must be an integer"))
+            return
+        python_cmd = parts[2] if len(parts) > 2 else "python3"
+        stager = build_stager(lhost, lport, python_cmd=python_cmd)
+        print(colors.heading("  stager:"))
+        print("  " + colors.session(stager))
+        print()
+        print(colors.dimmed(
+            "  run this on the target (needs " + python_cmd + " + base64)"
+        ))
+
     def do_connect(self, args):
         """connect <host> <port>  — connect to a bind shell"""
         import socket as _socket
@@ -543,16 +580,21 @@ class Console:
             f"interacting with {sid}. 'background' returns, '!cmd' runs locally."
         ))
 
-        self._sync_session(s, timeout=4.0)
-
-        for init_cmd in (
-            "stty -echo -onlcr 2>/dev/null",
-            "PS1='' PS2=''",
-            "set +m 2>/dev/null",
-        ):
-            s.shell(init_cmd, timeout=0.5)
-
-        self._sync_session(s, timeout=0.5)
+        if not getattr(s, "agent", False):
+            self._sync_session(s, timeout=4.0)
+            for init_cmd in (
+                "stty -echo -onlcr 2>/dev/null",
+                "PS1='' PS2=''",
+                "set +m 2>/dev/null",
+            ):
+                s.shell(init_cmd, timeout=0.5)
+            self._sync_session(s, timeout=0.5)
+        else:
+            try:
+                if hasattr(s, "sock") and hasattr(s.sock, "settimeout"):
+                    s.sock.settimeout(None)
+            except Exception:
+                pass
 
         while s.alive:
             try:

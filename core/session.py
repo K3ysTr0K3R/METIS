@@ -3,8 +3,9 @@ import threading
 import time
 import uuid
 
-
 class Session:
+    agent = False
+
     def __init__(self, sock, addr):
         self.id = uuid.uuid4().hex[:8]
         self.sock = sock
