@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 *.py.bak
+domains.txt
+passwords.txt
