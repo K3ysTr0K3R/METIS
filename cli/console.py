@@ -135,7 +135,6 @@ class MetisCompleter(Completer):
 class Console:
     BASE_PROMPT = "metis"
     VERSION = "2.0.0"
-    REPO = "K3ysTr0K3R/METIS"
     BANNER = (
         "███╗   ███╗███████╗████████╗██╗███████╗\n"
         "████╗ ████║██╔════╝╚══██╔══╝██║██╔════╝\n"
@@ -160,7 +159,6 @@ class Console:
         self.last_search = []
         self.running = True
         self._local_cwd = os.getcwd()
-        self._skip_update = "--no-update-check" in sys.argv
         self._spool_file = None
 
         self._config_path = os.path.expanduser("~/.metis_config")
@@ -211,94 +209,6 @@ class Console:
                 f.write(text + "\n")
         except Exception:
             pass
-
-    def _check_update_silent(self):
-        if self._skip_update:
-            return
-        import urllib.request
-        import json
-        try:
-            req = urllib.request.Request(
-                "https://api.github.com/repos/" + self.REPO + "/releases/latest",
-                headers={"User-Agent": "metis-updater"},
-            )
-            with urllib.request.urlopen(req, timeout=3) as r:
-                data = json.loads(r.read().decode())
-            latest = data.get("tag_name", "").lstrip("v")
-            if latest and latest != self.VERSION:
-                print(colors.warn(
-                    "update available: v" + self.VERSION + " -> v" + latest
-                    + " (run 'update')"
-                ))
-        except Exception:
-            pass
-
-    def do_update(self, args):
-        """update  — check GitHub for a newer release and pull if available"""
-        import urllib.request
-        import json
-
-        api = "https://api.github.com/repos/" + self.REPO + "/releases/latest"
-        current = self.VERSION
-
-        print(colors.info("current version: v" + current))
-        print(colors.info("checking " + self.REPO + "..."))
-
-        try:
-            req = urllib.request.Request(api, headers={"User-Agent": "metis-updater"})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                data = json.loads(r.read().decode())
-        except Exception as e:
-            print(colors.bad("could not reach GitHub: " + str(e)))
-            return
-
-        latest = data.get("tag_name", "").lstrip("v")
-        if not latest:
-            print(colors.bad("no tag_name in release response"))
-            return
-
-        print(colors.dimmed("  latest:  v" + latest))
-
-        if latest == current:
-            print(colors.good("already up to date"))
-            return
-
-        print(colors.warn("update available: v" + current + " -> v" + latest))
-        print(colors.dimmed("  release: " + str(data.get("html_url", ""))))
-
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        try:
-            r = subprocess.run(
-                ["git", "rev-parse", "--is-inside-work-tree"],
-                cwd=project_root,
-                capture_output=True, text=True, timeout=5,
-            )
-            if r.stdout.strip() != "true":
-                raise RuntimeError("not a git repo")
-        except Exception:
-            print(colors.bad("not a git clone — download manually:"))
-            print(colors.dimmed("  " + str(data.get("html_url", ""))))
-            return
-
-        print(colors.info("pulling updates via git..."))
-        try:
-            r = subprocess.run(
-                ["git", "pull", "origin", "main"],
-                cwd=project_root,
-                capture_output=True, text=True, timeout=60,
-            )
-            out = (r.stdout or "").strip()
-            err = (r.stderr or "").strip()
-            if out:
-                print(out)
-            if err:
-                print(colors.dimmed(err))
-            if r.returncode == 0:
-                print(colors.good("update complete — restart metis to apply"))
-            else:
-                print(colors.bad("git pull failed"))
-        except Exception as e:
-            print(colors.bad("git pull error: " + str(e)))
 
     def prompt(self):
         user_color = colors.wrap_fallback("prompt_user", "prompt")
@@ -2059,7 +1969,6 @@ class Console:
     def run(self):
         print(colors.bold(colors.cyan(self.BANNER)))
         print()
-        self._check_update_silent()
         try:
             while self.running:
                 try:
