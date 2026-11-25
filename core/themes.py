@@ -1975,4 +1975,4 @@ THEMES = {
     },
 }
 
-DEFAULT_THEME = "joker"
+DEFAULT_THEME = "synthwave"
